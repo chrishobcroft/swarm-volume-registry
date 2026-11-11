@@ -25,8 +25,8 @@ Each env in [`wrangler.jsonc`](./wrangler.jsonc) is one registry deployment, key
 
 Every run writes one JSON object to Workers Logs (`kind: "keeper/run"`) at the level matching its `status`:
 
-- **`failure`** (`console.error`) — invalid configuration, no usable RPC endpoint, the registry unreadable, or any volume whose transaction failed, reverted, or went unconfirmed within `RECEIPT_TIMEOUT_MS`, or whose batch was not sent because its gas estimate failed. One failed volume does not stop the rest being attempted. The invocation itself then fails, so Cron Events shows it too.
-- **`warning`** (`console.warn`) — a failover to a secondary RPC, the wallet below `MIN_BALANCE_WEI`, a `TopupSkipped` (`NoAuth`: payer revoked; `PaymentFailed`: out of BZZ or allowance; `NotActive`: retired before the batch reached it; `NotFound`: not a volume in this registry), a retirement, deferred work, or dry-run mode.
+- **`failure`** (`console.error`) — invalid configuration, no usable RPC endpoint, the registry unreadable, or any volume whose transaction failed or reverted, or whose batch was not sent because its gas estimate failed. One failed volume does not stop the rest being attempted. The invocation itself then fails, so Cron Events shows it too.
+- **`warning`** (`console.warn`) — a transaction unconfirmed within `RECEIPT_TIMEOUT_MS` (its volumes are `pending`), a failover to a secondary RPC, the wallet below `MIN_BALANCE_WEI`, a `TopupSkipped` (`NoAuth`: payer revoked; `PaymentFailed`: out of BZZ or allowance; `NotActive`: retired before the batch reached it; `NotFound`: not a volume in this registry), a retirement, deferred work, or dry-run mode.
 - **`ok`** (`console.log`).
 
 `failures` and `warnings` each list `{ message, volumeId?, hash? }`; `volumes` has the per-volume detail, including the healthy `noop`s. In the Workers Logs query builder, filter on `status` or `deployment`.

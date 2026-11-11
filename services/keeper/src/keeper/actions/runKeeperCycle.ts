@@ -5,6 +5,7 @@ import {
   hexToBigInt,
   keccak256,
   numberToHex,
+  WaitForTransactionReceiptTimeoutError,
 } from "viem";
 import {
   estimateMaxPriorityFeePerGas,
@@ -391,6 +392,17 @@ export async function runKeeperCycle<
       sending = undefined;
       // A sent-but-unconfirmed transaction still reports its hash so it can be
       // followed up; the next cycle re-decides from chain state regardless.
+      // Sepolia routinely takes a few blocks, so a slow receipt only warns.
+      if (hash && err instanceof WaitForTransactionReceiptTimeoutError) {
+        result.warnings.push({
+          ...(batch.length === 1 ? { volumeId: batch[0]!.volumeId } : {}),
+          hash,
+          message: `not confirmed within ${receiptTimeout / 1000} s; ${
+            batch.length === 1 ? "the volume" : `its ${batch.length} volumes`
+          } will be re-checked next cycle`,
+        });
+        return batch.map((v) => ({ volumeId: v.volumeId, status: "pending" as const, hash }));
+      }
       return batch.map((v) => ({
         volumeId: v.volumeId,
         status: "failed" as const,

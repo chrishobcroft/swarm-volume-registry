@@ -42,10 +42,12 @@ export interface VolumeResult {
    *
    * - `success` / `reverted` — mined, per the receipt.
    * - `simulated` — dry run; nothing was sent.
-   * - `failed` — never mined: the send failed, the receipt wait timed out,
-   *   or the batch was not sent because its gas estimate failed.
+   * - `pending` — sent, but the receipt wait timed out. It may still mine; the
+   *   next cycle re-reads the chain either way, so this is a warning.
+   * - `failed` — never mined: the send failed, or the batch was not sent
+   *   because its gas estimate failed.
    */
-  status: "success" | "reverted" | "simulated" | "failed";
+  status: "success" | "reverted" | "simulated" | "pending" | "failed";
   /** What the contract did. Present only when `status` is `success`. */
   outcome?: VolumeOutcomeKind;
   /** BZZ pulled from the payer, when `outcome` is `toppedUp`. */

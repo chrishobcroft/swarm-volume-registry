@@ -8,7 +8,8 @@
   // One Worker per registry deployment, never repointed: a new deployment
   // replaces its predecessor's env here, and the predecessor's Worker keeps
   // running whatever it was last deployed with until it is deleted out of band.
-  // Workers retired from this file, and the commit each was last deployed from:
+  // Workers retired from this file, and the commit each was last deployed from,
+  // all since deleted:
   //
   //   keeper-sepolia                    v2-rc2 0x00f72ee2…3c5a4177  a4f5b62
   //   keeper-cloudflare-sepolia-v2-rc3  v2-rc3 0xab326d6d…0078745e  b4b325c (#38 before its rebase)

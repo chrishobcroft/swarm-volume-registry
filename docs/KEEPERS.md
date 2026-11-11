@@ -168,10 +168,11 @@ Treat at least the following as failures:
 - Insufficient gas funds.
 - A reverted transaction.
 - A batch whose gas estimate reverts.
-- A transaction that does not receive a receipt within the configured timeout.
 
 Useful warnings include:
 
+- A transaction that does not receive a receipt within the configured timeout. It may
+  still mine, and the next run re-reads the chain either way.
 - Keeper wallet balance below its configured threshold.
 - Base fee substantially above its expected range.
 - Primary RPC failure or frequent failover.

@@ -467,17 +467,24 @@ describe("bounds and failures", () => {
     expect(result.error).toContain("socket hang up");
   });
 
-  test("a stuck transaction keeps its hash for follow-up, on every volume in it", async () => {
+  test("a stuck transaction warns and keeps its hash for follow-up, on every volume in it", async () => {
     const chain = mockChain({ volumes: [due(1), due(2)], dropReceipts: true });
     const result = await runKeeperCycle(chain.client, {
       registry: REGISTRY,
       receiptTimeout: 300,
     });
 
-    expect(result.ok).toBe(false);
-    expect(result.volumes.map((v) => v.status)).toEqual(["failed", "failed"]);
+    expect(result.ok).toBe(true);
+    expect(result.failed).toEqual([]);
+    expect(result.volumes.map((v) => v.status)).toEqual(["pending", "pending"]);
     expect(result.volumes[0]?.hash).toBeDefined();
     expect(result.volumes[1]?.hash).toBe(result.volumes[0]?.hash);
+    expect(result.warnings).toEqual([
+      {
+        hash: result.volumes[0]?.hash,
+        message: "not confirmed within 0.3 s; its 2 volumes will be re-checked next cycle",
+      },
+    ]);
   });
 
   test("dryRun estimates and sends nothing", async () => {
