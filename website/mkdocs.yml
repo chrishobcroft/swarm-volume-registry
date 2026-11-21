@@ -1,4 +1,5 @@
-# Docs website. Build from the repository root:
+# Docs website, published at https://volumes.md/ (custom domain set in the
+# repository's Settings → Pages). Build from the repository root:
 #
 #   pip install -r website/requirements.txt
 #   mkdocs serve -f website/mkdocs.yml      # http://127.0.0.1:8000
@@ -12,7 +13,7 @@ site_name: Swarm Volume Registry
 site_description: >-
   Integration reference for VolumeRegistry, a contract that keeps Swarm postage
   batches alive with a payer-funded, permissionless keeper API.
-site_url: https://shtukaresearch.github.io/swarm-volume-registry/
+site_url: https://volumes.md/
 repo_url: https://github.com/shtukaresearch/swarm-volume-registry
 repo_name: shtukaresearch/swarm-volume-registry
 edit_uri: blob/main/docs/

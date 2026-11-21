@@ -19,9 +19,9 @@ Every page here is also published as plain Markdown. Fetch it instead of the HTM
 
 | | |
 |---|---|
-| Index of pages | [`llms.txt`](https://shtukaresearch.github.io/swarm-volume-registry/llms.txt) |
-| Usage and keeper guide in one file | [`llms-full.txt`](https://shtukaresearch.github.io/swarm-volume-registry/llms-full.txt) |
-| One page | the page's path with `.md`, e.g. [`usage.md`](https://shtukaresearch.github.io/swarm-volume-registry/usage.md) |
+| Index of pages | [`llms.txt`](https://volumes.md/llms.txt) |
+| Usage and keeper guide in one file | [`llms-full.txt`](https://volumes.md/llms-full.txt) |
+| One page | the page's path with `.md`, e.g. [`usage.md`](https://volumes.md/usage.md) |
 | ABI | the `abi` field of the [deployment record](https://raw.githubusercontent.com/shtukaresearch/swarm-volume-registry/v2-rc4/contracts/deployments/sepolia/VolumeRegistry-v2-rc4.json) |
 
 Each HTML page also links its Markdown with `<link rel="alternate" type="text/markdown">`. The sources are in [`docs/`](https://github.com/shtukaresearch/swarm-volume-registry/tree/main/docs) on GitHub.

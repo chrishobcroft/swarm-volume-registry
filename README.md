@@ -20,7 +20,7 @@ Companion-contract addresses (`PostageStamp`, `BZZ`, `PriceOracle`) and runtime 
 
 ## Documentation
 
-The integration docs are published at **<https://shtukaresearch.github.io/swarm-volume-registry/>**, with each page also served as Markdown and an [`llms.txt`](https://shtukaresearch.github.io/swarm-volume-registry/llms.txt) index for agents. The site is built from [`docs/`](./docs) by [`website/`](./website/mkdocs.yml).
+The integration docs are published at **<https://volumes.md/>**, with each page also served as Markdown and an [`llms.txt`](https://volumes.md/llms.txt) index for agents. The site is built from [`docs/`](./docs) by [`website/`](./website/mkdocs.yml).
 
 ### For integrators
 
