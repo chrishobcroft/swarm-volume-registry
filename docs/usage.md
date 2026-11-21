@@ -243,12 +243,12 @@ postage = w3.eth.contract(address=registry.functions.postage().call(), abi=POSTA
 me = w3.eth.account.from_key(os.environ["PRIVATE_KEY"])
 
 
-def send(call, gas=None):
+def send(call):
     """Sign and send a contract call from `me`; return the receipt or raise."""
-    params = {"from": me.address, "nonce": w3.eth.get_transaction_count(me.address, "pending")}
-    if gas is not None:
-        params["gas"] = gas  # skip estimation
-    tx = call.build_transaction(params)
+    tx = call.build_transaction({
+        "from": me.address,
+        "nonce": w3.eth.get_transaction_count(me.address, "pending"),
+    })
     tx_hash = w3.eth.send_raw_transaction(me.sign_transaction(tx).raw_transaction)
     receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
     if receipt["status"] != 1:
@@ -290,9 +290,9 @@ const postage = {
 };
 
 /** Simulate, send, and wait for a successful receipt. */
-async function send(contract, functionName, args = [], overrides = {}) {
+async function send(contract, functionName, args = []) {
   const { request } = await client.simulateContract({
-    ...contract, account, functionName, args, ...overrides,
+    ...contract, account, functionName, args,
   });
   const hash = await wallet.writeContract(request);
   const receipt = await client.waitForTransactionReceipt({ hash });
@@ -472,7 +472,7 @@ Both revert `BatchNotLive` if the batch does not exist or is exhausted, and `Bat
 **cast**
 
 ```sh
-cast send --json --gas-limit 1500000 $REGISTRY "importVolume(bytes32,uint64)" $BATCH_ID 0 \
+cast send --json $REGISTRY "importVolume(bytes32,uint64)" $BATCH_ID 0 \
   | jq -r --arg t "$(cast sig-event 'VolumeImported(bytes32,address,bytes32,address,uint8,uint64,uint256)')" \
        '.logs[] | select(.topics[0] == $t) | .topics[1]'
 ```
@@ -480,7 +480,7 @@ cast send --json --gas-limit 1500000 $REGISTRY "importVolume(bytes32,uint64)" $B
 **web3.py**
 
 ```python
-receipt = send(registry.functions.importVolume(batch_id, 0), gas=1_500_000)
+receipt = send(registry.functions.importVolume(batch_id, 0))
 (imported,) = registry.events.VolumeImported().process_receipt(receipt, errors=DISCARD)
 volume_id = imported["args"]["volumeId"]
 ```
@@ -488,19 +488,19 @@ volume_id = imported["args"]["volumeId"]
 **viem**
 
 ```js
-const receipt = await send(registry, "importVolume", [batchId, 0n], { gas: 1_500_000n });
+const receipt = await send(registry, "importVolume", [batchId, 0n]);
 const [imported] = parseEventLogs({ abi, logs: receipt.logs, eventName: "VolumeImported" });
 ```
 
 **ethers**
 
 ```js
-const receipt = await send(registry.importVolume(batchId, 0, { gasLimit: 1_500_000n }));
+const receipt = await send(registry.importVolume(batchId, 0));
 const imported = receipt.logs.map((l) => registry.interface.parseLog(l)).find((e) => e?.name === "VolumeImported");
 ```
 <!-- /tabs -->
 
-Give `importVolume` an explicit gas limit, for the same reason as `trigger` ([§11](#11-triggering-a-top-up)): its cost depends on whether a top-up is due when it executes.
+Like `trigger`, `importVolume` costs much more when it tops up than when the batch is already at target, so its gas estimate depends on the state at the moment of estimation ([§11](#11-triggering-a-top-up)).
 
 Anyone with an active account can register any live batch, so a batch you own may also underlie other people's volumes. Top-ups are idempotent per batch: whichever volume is triggered first pays, and the others find nothing to pay. Do not assume a batch maps to one volume.
 
@@ -601,14 +601,14 @@ Past events need an RPC endpoint that serves `eth_getLogs` back to block `120526
 **cast**
 
 ```sh
-cast send --gas-limit 1500000 $REGISTRY "trigger(bytes32)" $VOLUME_ID
-cast send --gas-limit 3000000 $REGISTRY "trigger(bytes32[])" "[$VOLUME_ID,$OTHER_VOLUME_ID]"
+cast send $REGISTRY "trigger(bytes32)" $VOLUME_ID
+cast send $REGISTRY "trigger(bytes32[])" "[$VOLUME_ID,$OTHER_VOLUME_ID]"
 ```
 
 **web3.py**
 
 ```python
-receipt = send(registry.functions["trigger(bytes32)"](volume_id), gas=1_500_000)
+receipt = send(registry.functions["trigger(bytes32)"](volume_id))
 for name in ("Toppedup", "TopupSkipped", "VolumeRetired"):
     for ev in getattr(registry.events, name)().process_receipt(receipt, errors=DISCARD):
         print(name, dict(ev["args"]))
@@ -617,7 +617,7 @@ for name in ("Toppedup", "TopupSkipped", "VolumeRetired"):
 **viem**
 
 ```js
-const receipt = await send(registry, "trigger", [volumeId], { gas: 1_500_000n });
+const receipt = await send(registry, "trigger", [volumeId]);
 const outcomes = parseEventLogs({
   abi, logs: receipt.logs, eventName: ["Toppedup", "TopupSkipped", "VolumeRetired"],
 });
@@ -627,7 +627,7 @@ const outcomes = parseEventLogs({
 
 ```js
 // `trigger` is overloaded, so name the signature.
-const receipt = await send(registry["trigger(bytes32)"](volumeId, { gasLimit: 1_500_000n }));
+const receipt = await send(registry["trigger(bytes32)"](volumeId));
 for (const log of receipt.logs) {
   const e = registry.interface.parseLog(log);
   if (e && ["Toppedup", "TopupSkipped", "VolumeRetired"].includes(e.name)) console.log(e.name, e.args);
@@ -636,14 +636,14 @@ for (const log of receipt.logs) {
 <!-- /tabs -->
 
 > [!IMPORTANT]
-> **Set an explicit gas limit on `trigger`.** Its cost depends on the state at execution:
-> about 22–50k gas when there is nothing to pay or the trigger skips, but 400–850k when
-> it tops up, mostly spent in `PostageStamp.topUp`. A gas estimate taken while the batch
-> is at target, for instance in the block right after a top-up, takes the cheap path,
-> but every block drains the batch, so by the time the transaction executes there is a
-> deficit and it runs out of gas. Use at least 1,000,000 gas per volume, or twice an
-> estimate taken while the volume is due, whichever is larger. Only the gas actually
-> used is charged.
+> **Gas estimates for `trigger` depend on when they are taken.** Its cost depends on the
+> state at execution: about 22–50k gas when there is nothing to pay or the trigger skips,
+> but 400–850k when it tops up, mostly spent in `PostageStamp.topUp`. An estimate taken
+> while the batch is at target, for instance in the block right after a top-up, measures
+> the cheap path. Every block drains the batch, so by the time the transaction executes
+> there may be a deficit, and a transaction sent with that estimate as its limit runs
+> out of gas. We hit this while testing the examples on this page: a trigger and an
+> `importVolume`, each sent one block after the volume was created, reverted out of gas.
 
 A successful receipt always means every requested volume was processed. Each volume produces exactly one of `Toppedup`, `TopupSkipped` or `VolumeRetired`, or no event if nothing was due ([§14](#14-errors-and-revert-semantics)).
 
@@ -790,7 +790,7 @@ Value 0 is never emitted for either reason enum.
 
 A keeper transaction reverts only on:
 
-- **out of gas**, the only routine cause (see the gas note in [§11](#11-triggering-a-top-up));
+- **out of gas**, the only routine cause (see the note on gas estimates in [§11](#11-triggering-a-top-up));
 - **a paused `PostageStamp`**, or a paused Sepolia BZZ token;
 - **a fault** in the registry, Postage or the token. Report it.
 

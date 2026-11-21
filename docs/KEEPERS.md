@@ -43,7 +43,7 @@ All four are a successful transaction. In particular, unlike earlier releases, `
 
 A keeper transaction reverts only on:
 
-- **out of gas**, the only routine cause ([Gas limits](#gas-limits));
+- **out of gas**, the only routine cause ([Gas usage](#gas-usage));
 - **a paused `PostageStamp`**, or a paused Sepolia BZZ token, which affects every volume;
 - **a fault** in the registry, Postage or the token, which should be reported.
 
@@ -53,14 +53,14 @@ So a successful receipt means every requested volume was processed, and a revert
 
 Either entry point is fine on `v2-rc4`:
 
-- **`trigger(bytes32)`, one transaction per volume.** A revert affects only that volume, gas limits are simple, and each volume has its own transaction hash. This is the default choice, and what the [reference keeper](#reference-implementation) does.
-- **`trigger(bytes32[])`, one transaction for several volumes.** It saves the 21k transaction base cost and nonce handling for all but one volume. It is all-or-nothing: an out-of-gas or a fault on any volume rolls back the whole batch, and no volume in it is topped up. Keep batches small enough that one failure does not hold up many volumes, and size the gas limit per ID as below.
+- **`trigger(bytes32)`, one transaction per volume.** A revert affects only that volume, and each volume has its own transaction hash. This is the default choice, and what the [reference keeper](#reference-implementation) does.
+- **`trigger(bytes32[])`, one transaction for several volumes.** It saves the 21k transaction base cost and nonce handling for all but one volume. It is all-or-nothing: an out-of-gas or a fault on any volume rolls back the whole batch, and no volume in it is topped up. Keep batches small enough that one failure does not hold up many volumes.
 
 The batched entry point's old problems are gone: `eth_estimateGas` now measures the real work, and a failed transfer for one volume cannot silently use up the rest of the batch's gas.
 
 Process every configured volume even if an earlier one fails, but report the run as failed and say which volumes were affected.
 
-## Gas limits
+## Gas usage
 
 The gas `trigger` uses depends on the state when it executes:
 
@@ -69,11 +69,11 @@ The gas `trigger` uses depends on the state when it executes:
 | Nothing due, skipped, or retired | ≈ 22–50k |
 | Topped up | ≈ 400–850k, mostly `PostageStamp.topUp` |
 
-An estimate taken while a batch is at target, for example in the block right after a top-up or right after another keeper's trigger, measures the cheap path. Every block drains the batch, so by the time the transaction executes there is a deficit, and the top-up path runs out of gas. Do not send `trigger` with a bare `eth_estimateGas` result as its limit.
+An estimate taken while a batch is at target, for example in the block right after a top-up or right after another keeper's trigger, measures the cheap path. Every block drains the batch, so by the time the transaction executes there may be a deficit. A transaction sent with that estimate as its gas limit then takes the top-up path and reverts out of gas. We ran into this while testing the examples in [Usage](./usage.md): a trigger sent one block after its volume was created failed this way.
 
-Set the gas limit per volume to the larger of a fixed floor, at least 1,000,000 on Sepolia, and twice the estimate. The [reference keeper](#reference-implementation) uses the larger of 1.2 × the estimate and 3,000,000. For `trigger(bytes32[])`, multiply by the number of IDs. Only gas actually used is charged, but the wallet must hold enough for `gasLimit × maxFeePerGas` to send the transaction.
+How to choose a gas limit is up to the keeper, but whatever it does has to allow for the state changing between estimation and execution. For `trigger(bytes32[])`, that applies to every ID in the batch. Only gas actually used is charged, but the wallet must hold `gasLimit × maxFeePerGas` to send the transaction.
 
-Treat an out-of-gas revert as a keeper failure. Check the limit first if one occurs.
+Treat an out-of-gas revert as a keeper failure.
 
 ## Choosing volumes
 
@@ -127,7 +127,7 @@ Monitor the keeper wallet's balance and warn well before it runs out. A schedule
 
 Choose the warning threshold from:
 
-- the gas per volume, using the top-up figure ([Gas limits](#gas-limits));
+- the gas per volume, using the top-up figure ([Gas usage](#gas-usage));
 - the number of volumes;
 - the run frequency;
 - current and unusually high base fees;
@@ -150,7 +150,7 @@ Record the transaction hash and the decoded outcome for each volume. Decode outc
 | `TopupSkipped(NotFound)` | warning | Keeper operator: the configured ID is wrong |
 | `TopupSkipped(NotActive)` | warning, then drop the ID | — the volume is Retired |
 | `VolumeRetired` | warning, then drop the ID | Owner, if the volume was meant to continue |
-| Reverted transaction | failure | Keeper operator: gas limit first, then Postage pause status, then report a fault |
+| Reverted transaction | failure | Keeper operator: out-of-gas first, then Postage pause status, then report a fault |
 
 Repeated skips for the same volume should escalate. A volume that keeps skipping is draining toward `BatchDied`.
 
@@ -208,7 +208,7 @@ Without any sBZZ you can still test:
 
 A full end-to-end test needs a volume funded with sBZZ. With one, also check:
 
-- a successful top-up within the gas limit, in the block right after another top-up;
+- a successful top-up sent in the block right after another top-up;
 - receipt and event handling for every outcome in the table above;
 - that processing continues when one configured volume fails;
 - that missed runs leave the intended margin.
