@@ -3,13 +3,13 @@
 This document fixes the architecture of the v2 `VolumeRegistry` contract. V2 is the
 next deployment and deliberately removes v1's unilateral ownership-transfer surface.
 Rationale is inline; constraints inherited from the underlying `PostageStamp` contract
-are summarised in §14. The currently deployed v1 behavior remains documented in
+are summarised in §14. The integration reference for the deployed v2 release is
 [`usage.md`](./usage.md).
 
 Batch import (§7.1) and the separation of volume IDs from batch IDs (§4) are specified
 here ahead of implementation and are targeted at the Sepolia `v2-rc3` release; `v2-rc1`
 and `v2-rc2` predate them. The rationale for contract changes is recorded in
-[`adr/`](./adr/).
+[`adr/`](./adr/README.md).
 
 ## 1. Goals
 

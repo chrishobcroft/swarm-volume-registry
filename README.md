@@ -16,14 +16,16 @@ The `VolumeRegistry` contract creates and wraps postage batches in an on-chain *
 
 Machine-readable deployment records live in [`contracts/deployments/`](./contracts/deployments). Release names and the release procedure are documented in [`RELEASING.md`](./RELEASING.md).
 
-Companion-contract addresses (`PostageStamp`, `BZZ`, `PriceOracle`) and runtime discovery snippets are in [`docs/usage.md`](./docs/usage.md) §2. `graceBlocks` is constructor-immutable; a different runway target requires a fresh deployment.
+Companion-contract addresses (`PostageStamp`, `BZZ`, `PriceOracle`) and runtime discovery snippets for the current release are in [`docs/usage.md`](./docs/usage.md) §2. `graceBlocks` is constructor-immutable; a different runway target requires a fresh deployment.
 
 ## Documentation
 
+The integration docs are published at **<https://shtukaresearch.github.io/swarm-volume-registry/>**, with each page also served as Markdown and an [`llms.txt`](https://shtukaresearch.github.io/swarm-volume-registry/llms.txt) index for agents. The site is built from [`docs/`](./docs) by [`website/`](./website/mkdocs.yml).
+
 ### For integrators
 
-- [`docs/usage.md`](./docs/usage.md) — deployed-v1 integration reference. Role profiles, setup commands, API reference, event catalogue, retirement and revocation semantics, cost estimation, Bee upload guide.
-- [`docs/KEEPERS.md`](./docs/KEEPERS.md) — keeper operations guide.
+- [`docs/usage.md`](./docs/usage.md) — integration reference for `v2-rc4` (Sepolia testnet). Deployment and ABI, setup walkthroughs with `cast`, web3.py, viem and ethers, API reference, events, errors and revert semantics, retirement and revocation, cost estimation, Bee upload guide.
+- [`docs/KEEPERS.md`](./docs/KEEPERS.md) — keeper operations guide: revert semantics, gas limits, scheduling, monitoring.
 
 ### For contributors
 
@@ -45,14 +47,15 @@ contracts/         Foundry project — VolumeRegistry contract and tests
 services/          Off-chain services, each a standalone project
   keeper/          Cloudflare Worker keeper (pnpm, Node 24)
   indexer/         ethswarm-volumes — indexer and CLI for VolumeRegistry deployments (Python)
-docs/              Design and integration documentation
+docs/              Design and integration documentation (source of the docs website)
+website/           MkDocs configuration for the docs website
 ```
 
 See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for build, test, and deploy instructions.
 
 ## Roles
 
-Two configurations cover the common integration cases. See [`docs/usage.md`](./docs/usage.md) §4 and §5 for full setup steps and `cast` snippets.
+Two configurations cover the common integration cases. See [`docs/usage.md`](./docs/usage.md) §5 and §7–§9 for full setup steps.
 
 ### Profile A — single EOA
 
