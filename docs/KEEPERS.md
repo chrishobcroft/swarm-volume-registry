@@ -37,7 +37,7 @@ forge inspect IVolumeRegistryViews  abi --json > views.abi.json
 
 ## Revert semantics
 
-Keeper endpoints do not revert because of the state of a volume, an account or a payer ([ADR-0007](./adr/0007-keeper-endpoints-revert-only-on-bugs.md)). Each volume passed to `trigger` ends in exactly one of:
+Keeper endpoints do not revert because of the state of a volume, an account or a payer. Each volume passed to `trigger` ends in exactly one of:
 
 | Outcome | Event | Meaning |
 |---|---|---|

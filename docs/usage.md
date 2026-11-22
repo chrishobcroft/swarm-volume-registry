@@ -1,6 +1,6 @@
 # Swarm Volume Registry — Usage
 
-An integration reference for the deployed `VolumeRegistry` contract, release `v2-rc4`. It is written for software agents that integrate with the registry on someone's behalf, and for people driving it from scripts. Examples are given for `cast` (Foundry), web3.py, viem and ethers. The architecture and its rationale are in [`DESIGN.md`](./DESIGN.md) and the [decision records](./adr/README.md); this page covers the public behavior only.
+An integration reference for the deployed `VolumeRegistry` contract, release `v2-rc4`. It is written for software agents that integrate with the registry on someone's behalf, and for people driving it from scripts. Examples are given for `cast` (Foundry), web3.py, viem and ethers. This page covers the contract's public behavior. Further design documentation, including the architecture, invariants and the reasoning behind them, is in the [GitHub repository](https://github.com/shtukaresearch/swarm-volume-registry).
 
 > [!WARNING]
 > **Testnet only.** `v2-rc4` is a release candidate deployed on Sepolia (chain ID
@@ -407,7 +407,7 @@ The owner is an EOA, which also signs chunks. The payer is a Safe or another sma
 - **If the owner key is compromised:** the attacker can spend payer funds up to the Safe's current allowance to the registry. Keep that allowance near projected needs rather than `type(uint256).max`. A single `revoke(owner)` from the Safe stops all top-ups for the owner. Because the owner here is also the chunk signer, the attacker can also call `PostageStamp.increaseDepth` directly, which makes the next trigger retire the volume (`DepthChanged`).
 - **If the Safe is compromised:** that is outside what the registry protects.
 
-An owner separate from the chunk signer is supported but is advanced usage. See [`DESIGN.md`](./DESIGN.md) §5 for the threat model.
+An owner separate from the chunk signer is supported but is advanced usage.
 
 ## 5. Importing an existing batch
 
@@ -748,7 +748,7 @@ Value 0 is never emitted for either reason enum.
 
 ## 11. Errors and revert semantics
 
-`trigger` and `reap` never revert because of the state of a volume, an account or a payer: the outcome for each volume is reported by an event ([§10](#10-events-and-reason-codes)). They revert only on out-of-gas, a paused `PostageStamp` or BZZ token, or a fault ([ADR-0007](./adr/0007-keeper-endpoints-revert-only-on-bugs.md); details in [Running a keeper](./KEEPERS.md#revert-semantics)).
+`trigger` and `reap` never revert because of the state of a volume, an account or a payer: the outcome for each volume is reported by an event ([§10](#10-events-and-reason-codes)). They revert only on out-of-gas, a paused `PostageStamp` or BZZ token, or a fault (details in [Running a keeper](./KEEPERS.md#revert-semantics)).
 
 ### Owner and payer endpoints revert with named errors
 
@@ -823,7 +823,7 @@ If a volume was last created, imported or topped up at block `t0`, its batch sur
 
 For this deployment (`graceBlocks = 300`): `f ≈ 0.9992`, so at least ≈ 299.8 blocks, about 60 minutes at 12-second blocks. Under flat or falling prices the runway is at least the full `graceBlocks`. A volume created with `registerVolume` has no guarantee until its first successful top-up.
 
-The bound assumes the PriceOracle's rate-limited path. An account with `PRICE_ORACLE_ROLE` can set the price directly. A paused Postage blocks top-ups while batches keep draining. If Postage's administrator raises `minimumValidityBlocks` above this deployment's `graceBlocks`, top-ups revert until users move to a compatible deployment. Derivation: [`DESIGN.md`](./DESIGN.md) §10.1.
+The bound assumes the PriceOracle's rate-limited path. An account with `PRICE_ORACLE_ROLE` can set the price directly. A paused Postage blocks top-ups while batches keep draining. If Postage's administrator raises `minimumValidityBlocks` above this deployment's `graceBlocks`, top-ups revert until users move to a compatible deployment.
 
 Wall-clock time is not guaranteed: Sepolia block times vary. Trigger well inside the runway ([Running a keeper](./KEEPERS.md#scheduling)).
 
@@ -904,13 +904,10 @@ Deliberately out of scope:
 - **A shortcut for self-designation.** Profile A still needs both handshake steps.
 - **On-chain spam prevention for `registerVolume`.** The active set can contain volumes that never fund. Keepers should expect skips.
 
-Full list: [`DESIGN.md`](./DESIGN.md) §13.
-
 ## 20. References
 
 - [Running a keeper](./KEEPERS.md): operating a keeper, including revert handling and monitoring.
-- [`DESIGN.md`](./DESIGN.md): architecture, invariants, threat model, survival-bound derivation.
-- [Decision records](./adr/README.md), especially [ADR-0007](./adr/0007-keeper-endpoints-revert-only-on-bugs.md) on revert semantics.
+- [GitHub repository](https://github.com/shtukaresearch/swarm-volume-registry): source, deployment records, and further design documentation.
 - [`contracts/src/interfaces/`](../contracts/src/interfaces/): the Solidity interfaces.
 - [`contracts/deployments/`](../contracts/deployments/): deployment records.
 - [Swarm documentation](https://docs.ethswarm.org): Bee, uploads, postage batches.
