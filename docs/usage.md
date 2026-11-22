@@ -1,451 +1,915 @@
 # Swarm Volume Registry — Usage
 
-A reference for integrating with a deployed `VolumeRegistry` contract. Aimed at LLM agents writing integrations and at humans driving the contract from `cast` or ad-hoc scripts. Authoritative architecture lives in [`DESIGN.md`](./DESIGN.md); this file documents the *public-facing* behavior only.
+An integration reference for the deployed `VolumeRegistry` contract, release `v2-rc4`. It is written for software agents that integrate with the registry on someone's behalf, and for people driving it from scripts. Examples are given for `cast` (Foundry), web3.py, viem and ethers. This page covers the contract's public behavior. Further design documentation, including the architecture, invariants and the reasoning behind them, is in the [GitHub repository](https://github.com/shtukaresearch/swarm-volume-registry).
 
 > [!WARNING]
-> The deployed contracts are early-alpha and immutable. The Gnosis deployment is still
-> v1, whose `transferVolumeOwnership` function does not require acceptance by the
-> recipient. If the recipient already has an active account, the next keeper trigger can
-> charge that account's payer for the transferred volume. Keep allowances bounded, use
-> ownership transfer only by prior agreement, and see [§10](#10-revocation) for the
-> emergency response to an unsolicited transfer. v2 removes the function entirely and is
-> deployed on Sepolia only — see [§2](#2-deployments).
+> **Testnet only.** `v2-rc4` is a release candidate deployed on Sepolia (chain ID
+> 11155111). There is no v2 deployment on Gnosis Chain or any other mainnet yet. Sepolia
+> BZZ has no value, and a release candidate can be superseded by a new deployment at a
+> new address at any time. Deployed contracts are immutable: a fix ships as a new
+> address, not as an upgrade. Do not build anything that holds value on this deployment.
 
 ## Contents
 
-1. [What this is](#1-what-this-is)
-2. [Deployments](#2-deployments)
+1. [Quickstart](#1-quickstart)
+2. [Contract addresses](#2-contract-addresses)
 3. [Concepts](#3-concepts)
 4. [Role profiles](#4-role-profiles)
-5. [Setup](#5-setup)
-6. [API reference](#6-api-reference)
-7. [Events](#7-events)
-8. [How topups work](#8-how-topups-work)
-9. [Retirement](#9-retirement)
-10. [Revocation](#10-revocation)
-11. [Survival guarantee](#11-survival-guarantee)
-12. [Cost estimation](#12-cost-estimation)
-13. [Uploading to Swarm with Bee](#13-uploading-to-swarm-with-bee)
-14. [Not in v1](#14-not-in-v1)
-15. [References](#15-references)
+5. [Importing an existing batch](#5-importing-an-existing-batch)
+6. [Safe as payer](#6-safe-as-payer)
+7. [Reading state](#7-reading-state)
+8. [Keeping a volume funded](#8-keeping-a-volume-funded)
+9. [API reference](#9-api-reference)
+10. [Events and reason codes](#10-events-and-reason-codes)
+11. [Errors and revert semantics](#11-errors-and-revert-semantics)
+12. [How top-ups work](#12-how-top-ups-work)
+13. [Retirement](#13-retirement)
+14. [Revocation](#14-revocation)
+15. [Survival guarantee](#15-survival-guarantee)
+16. [Cost estimation](#16-cost-estimation)
+17. [Testnet tokens](#17-testnet-tokens)
+18. [Uploading to Swarm with Bee](#18-uploading-to-swarm-with-bee)
+19. [Not in v2](#19-not-in-v2)
+20. [References](#20-references)
 
 ---
 
-## 1. What this is
+## 1. Quickstart
 
-`VolumeRegistry` is a Swarm contract that wraps postage batch lifecycle behind a two-role ownership model and a permissionless keeper API.
+The quickest way to get a volume that the registry keeps funded. One key acts as owner, payer and chunk signer ([Profile A](#4-role-profiles)). For anything worth protecting, make a Safe the payer instead ([§6](#6-safe-as-payer)).
 
-- You create a *volume* once. It is an on-chain record bound 1:1 to a Postage batch.
-- A separately-authorized *funding wallet* (the "payer") holds BZZ. Payment happens via ERC20 `approve` — no custody, no delegation beyond the allowance.
-- A *keeper* — anyone — calls `trigger(volumeId)` on a schedule, and the registry tops the batch back up to a fixed runway target. An altruistic keeper runs against this deployment on a best-effort basis, so the common case requires no keeper setup on your part.
-- Revoking the payer is a single O(1) call that disables topups across every volume managed by the (owner, payer) pair.
+You need:
 
-The contract does not custody BZZ, does not sign chunks, is not upgradeable, and has no admin role.
+- a Sepolia RPC endpoint;
+- a key holding a little Sepolia ETH for gas and some sBZZ for storage ([§17](#17-testnet-tokens)). The smallest volume, depth 17, cost under 0.001 sBZZ up front at the time of writing.
 
-## 2. Deployments
+It takes four transactions:
 
-### Mainnet — Gnosis Chain (chain ID 100) — registry v1
+1. `BZZ.approve(registry, amount)`: your key, as payer, lets the registry pull BZZ.
+2. `designateFundingWallet(you)`: your key, as owner, names its payer.
+3. `confirmAuth(you)`: your key, as payer, accepts. Your account is now active. The handshake applies even when owner and payer are the same address.
+4. `createVolume(...)`: the registry mints a Postage batch and charges its first runway.
 
-| Contract | Address |
-|---|---|
-| `VolumeRegistry` (v1) | `0x9639ae4c7a8fa9efe585738d516a3915ddd02aad` |
-| `PostageStamp` | `0x45a1502382541Cd610CC9068e88727426b696293` |
-| `BZZ` | `0xdBF3Ea6F5beE45c02255B2c26a16F300502F68da` |
-| `PriceOracle` | `0x47EeF336e7fE5bED98499A4696bce8f28c1B0a8b` |
-| `graceBlocks` | `17280` (≈ 24 h at 5-second blocks) |
+### Step 1: connect
 
-### Testnet — Sepolia (chain ID 11155111) — registry v2 (release `v2-rc2`)
+The remaining examples assume the setup below. Environment variables:
 
-| Contract | Address |
-|---|---|
-| `VolumeRegistry` (`v2-rc2`) | `0x00f72ee2970df8112fdf04c0225b33c43c5a4177` |
-| `PostageStamp` | `0xcdfdC3752caaA826fE62531E0000C40546eC56A6` |
-| `BZZ` (TestToken) | `0x543dDb01Ba47acB11de34891cD86B675F04840db` |
-| `PriceOracle` | `0x95Dc18380e92C13E4F8a4e94C99FB1b97250174B` |
-| `graceBlocks` | `300` (≈ 1 h at 12-second blocks) |
+- `RPC_URL`: a Sepolia JSON-RPC endpoint. Use your own provider for writes and for log queries; public endpoints are often rate-limited or prune log history.
+- A signing key. For `cast`, a keystore account. For the others, `PRIVATE_KEY`, 0x-prefixed. Never put a funded mainnet key in an environment variable.
 
-The two deployments are not the same contract version. Sepolia runs v2; Gnosis is still v1 and retains `transferVolumeOwnership`, so the unsolicited-transfer response in [§10](#10-revocation) applies there and only there. The superseded v1 Sepolia registry was `0x3a99b4b52a4bd75760667219ea93c627051b1af8` — it holds no active volumes and is no longer maintained.
-
-The Sepolia `graceBlocks` is short (≈ 1 h) so that topup and expiry cycles can be observed on a testnet timescale. The previous Sepolia release, `v2-rc1` at `0x33a53c79a08ed1f863905cd4c6ce036a4c493729`, has the same source with `graceBlocks = 12` (≈ 2.4 min). An altruistic keeper runs every ten minutes against `v2-rc2` on a best-effort basis; integration tests should not rely on it and should either call `trigger` directly or run their own keeper.
-
-`graceBlocks` is constructor-immutable per deployment. A different runway target requires a fresh deployment.
-
-At runtime you can discover the chain-local dependencies from the registry itself:
+<!-- tabs -->
+**cast**
 
 ```sh
-cast call $REGISTRY "postage()(address)"
-cast call $REGISTRY "bzz()(address)"
-cast call $REGISTRY "graceBlocks()(uint64)"
-cast call $POSTAGE  "priceOracle()(address)"
+# One-time: store the key in Foundry's encrypted keystore.
+cast wallet import owner --interactive
+
+export ETH_RPC_URL=https://...                 # cast reads this
+export ETH_KEYSTORE_ACCOUNT=owner              # cast signs with this keystore account
+export REGISTRY=0xe491308994af391a32191a8c380ca818dad332a4
+export POSTAGE=$(cast call $REGISTRY "postage()(address)")
+export BZZ=$(cast call $REGISTRY "bzz()(address)")
+export YOU=$(cast wallet address)
+
+test "$(cast chain-id)" = 11155111 || echo "not Sepolia"
+```
+
+**web3.py**
+
+```python
+# pip install "web3>=7"   (tested with web3.py 8.0)
+import json
+import os
+import urllib.request
+
+from eth_abi import encode
+from web3 import Web3
+from web3.logs import DISCARD
+
+REGISTRY = Web3.to_checksum_address("0xe491308994af391a32191a8c380ca818dad332a4")
+RECORD_URL = (
+    "https://raw.githubusercontent.com/shtukaresearch/swarm-volume-registry/"
+    "v2-rc4/contracts/deployments/sepolia/VolumeRegistry-v2-rc4.json"
+)
+ERC20_ABI = [
+    {"type": "function", "name": "approve", "stateMutability": "nonpayable",
+     "inputs": [{"name": "spender", "type": "address"}, {"name": "amount", "type": "uint256"}],
+     "outputs": [{"type": "bool"}]},
+    {"type": "function", "name": "allowance", "stateMutability": "view",
+     "inputs": [{"name": "owner", "type": "address"}, {"name": "spender", "type": "address"}],
+     "outputs": [{"type": "uint256"}]},
+    {"type": "function", "name": "balanceOf", "stateMutability": "view",
+     "inputs": [{"name": "account", "type": "address"}], "outputs": [{"type": "uint256"}]},
+]
+POSTAGE_ABI = [
+    {"type": "function", "name": "lastPrice", "stateMutability": "view",
+     "inputs": [], "outputs": [{"type": "uint64"}]},
+]
+
+w3 = Web3(Web3.HTTPProvider(os.environ["RPC_URL"]))
+assert w3.eth.chain_id == 11155111, "not Sepolia"
+
+with urllib.request.urlopen(RECORD_URL) as r:
+    registry = w3.eth.contract(address=REGISTRY, abi=json.load(r)["abi"])
+bzz = w3.eth.contract(address=registry.functions.bzz().call(), abi=ERC20_ABI)
+postage = w3.eth.contract(address=registry.functions.postage().call(), abi=POSTAGE_ABI)
+
+me = w3.eth.account.from_key(os.environ["PRIVATE_KEY"])
+
+
+def send(call):
+    """Sign and send a contract call from `me`; return the receipt or raise."""
+    tx = call.build_transaction({
+        "from": me.address,
+        "nonce": w3.eth.get_transaction_count(me.address, "pending"),
+    })
+    tx_hash = w3.eth.send_raw_transaction(me.sign_transaction(tx).raw_transaction)
+    receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
+    if receipt["status"] != 1:
+        raise RuntimeError(f"reverted: 0x{tx_hash.hex()}")
+    return receipt
+```
+
+**viem**
+
+```js
+// npm i viem   (tested with viem 2.58; Node ESM, e.g. a .mjs file)
+import {
+  createPublicClient, createWalletClient, http, erc20Abi, parseAbi,
+  parseEventLogs, keccak256, encodeAbiParameters,
+} from "viem";
+import { sepolia } from "viem/chains";
+import { privateKeyToAccount } from "viem/accounts";
+
+const REGISTRY = "0xe491308994af391a32191a8c380ca818dad332a4";
+const RECORD_URL =
+  "https://raw.githubusercontent.com/shtukaresearch/swarm-volume-registry/" +
+  "v2-rc4/contracts/deployments/sepolia/VolumeRegistry-v2-rc4.json";
+
+// In TypeScript, paste the ABI into the source with `as const` instead, to get typed calls.
+const { abi } = await (await fetch(RECORD_URL)).json();
+const account = privateKeyToAccount(process.env.PRIVATE_KEY);
+const transport = http(process.env.RPC_URL);
+const client = createPublicClient({ chain: sepolia, transport });
+const wallet = createWalletClient({ account, chain: sepolia, transport });
+
+const registry = { address: REGISTRY, abi };
+const bzz = {
+  address: await client.readContract({ ...registry, functionName: "bzz" }),
+  abi: erc20Abi,
+};
+const postage = {
+  address: await client.readContract({ ...registry, functionName: "postage" }),
+  abi: parseAbi(["function lastPrice() view returns (uint64)"]),
+};
+
+/** Simulate, send, and wait for a successful receipt. */
+async function send(contract, functionName, args = []) {
+  const { request } = await client.simulateContract({
+    ...contract, account, functionName, args,
+  });
+  const hash = await wallet.writeContract(request);
+  const receipt = await client.waitForTransactionReceipt({ hash });
+  if (receipt.status !== "success") throw new Error(`reverted: ${hash}`);
+  return receipt;
+}
+```
+
+**ethers**
+
+```js
+// npm i ethers   (tested with ethers 6.17; Node ESM, e.g. a .mjs file)
+import { Contract, JsonRpcProvider, Wallet, AbiCoder, keccak256 } from "ethers";
+
+const REGISTRY = "0xe491308994af391a32191a8c380ca818dad332a4";
+const RECORD_URL =
+  "https://raw.githubusercontent.com/shtukaresearch/swarm-volume-registry/" +
+  "v2-rc4/contracts/deployments/sepolia/VolumeRegistry-v2-rc4.json";
+
+const { abi } = await (await fetch(RECORD_URL)).json();
+const provider = new JsonRpcProvider(process.env.RPC_URL, 11155111, { staticNetwork: true });
+const signer = new Wallet(process.env.PRIVATE_KEY, provider);
+const registry = new Contract(REGISTRY, abi, signer);
+const bzz = new Contract(await registry.bzz(), [
+  "function approve(address spender, uint256 amount) returns (bool)",
+  "function allowance(address owner, address spender) view returns (uint256)",
+  "function balanceOf(address account) view returns (uint256)",
+], signer);
+const postage = new Contract(await registry.postage(), [
+  "function lastPrice() view returns (uint64)",
+], provider);
+
+/** Wait for a sent transaction; `wait()` throws if it reverted. */
+async function send(txPromise) {
+  const tx = await txPromise;
+  return tx.wait();
+}
+```
+<!-- /tabs -->
+
+### Step 2: authorize the account
+
+The initial charge is `lastPrice × graceBlocks × 2^depth` PLUR, pulled in the `createVolume` transaction. The allowance must cover it and the top-ups after it. The examples approve ten times the initial charge; size it properly with [§16](#16-cost-estimation).
+
+<!-- tabs -->
+**cast**
+
+```sh
+DEPTH=17
+PRICE=$(cast call $POSTAGE "lastPrice()(uint64)" | cut -d' ' -f1)
+GRACE=$(cast call $REGISTRY "graceBlocks()(uint64)" | cut -d' ' -f1)
+CHARGE=$(( PRICE * GRACE * (1 << DEPTH) ))    # shell arithmetic is 64-bit: fine for small depths
+
+cast send $BZZ "approve(address,uint256)" $REGISTRY $(( CHARGE * 10 ))
+cast send $REGISTRY "designateFundingWallet(address)" $YOU
+cast send $REGISTRY "confirmAuth(address)" $YOU
+```
+
+**web3.py**
+
+```python
+depth = 17
+charge = postage.functions.lastPrice().call() * registry.functions.graceBlocks().call() << depth
+
+send(bzz.functions.approve(REGISTRY, charge * 10))
+send(registry.functions.designateFundingWallet(me.address))
+send(registry.functions.confirmAuth(me.address))
+```
+
+**viem**
+
+```js
+const depth = 17;
+const price = await client.readContract({ ...postage, functionName: "lastPrice" });
+const grace = await client.readContract({ ...registry, functionName: "graceBlocks" });
+const charge = (price * grace) << BigInt(depth);
+
+await send(bzz, "approve", [REGISTRY, charge * 10n]);
+await send(registry, "designateFundingWallet", [account.address]);
+await send(registry, "confirmAuth", [account.address]);
+```
+
+**ethers**
+
+```js
+const depth = 17n;
+const charge = ((await postage.lastPrice()) * (await registry.graceBlocks())) << depth;
+
+await send(bzz.approve(REGISTRY, charge * 10n));
+await send(registry.designateFundingWallet(signer.address));
+await send(registry.confirmAuth(signer.address));
+```
+<!-- /tabs -->
+
+### Step 3: create the volume
+
+<!-- tabs -->
+**cast**
+
+```sh
+RECEIPT=$(cast send --json $REGISTRY "createVolume(address,uint8,uint8,uint64,bool)" $YOU $DEPTH 16 0 false)
+TOPIC=$(cast sig-event "VolumeCreated(bytes32,address,bytes32,address,uint8,uint64)")
+VOLUME_ID=$(jq -r --arg t "$TOPIC" '.logs[] | select(.topics[0] == $t) | .topics[1]' <<<"$RECEIPT")
+BATCH_ID=$(jq -r --arg t "$TOPIC" '.logs[] | select(.topics[0] == $t) | .topics[3]' <<<"$RECEIPT")
+echo "volume $VOLUME_ID  batch $BATCH_ID"
+```
+
+**web3.py**
+
+```python
+receipt = send(registry.functions.createVolume(me.address, depth, 16, 0, False))
+(created,) = registry.events.VolumeCreated().process_receipt(receipt, errors=DISCARD)
+volume_id = created["args"]["volumeId"]   # bytes
+batch_id = created["args"]["batchId"]
+print("volume 0x" + volume_id.hex(), "batch 0x" + batch_id.hex())
+```
+
+**viem**
+
+```js
+const receipt = await send(registry, "createVolume", [account.address, depth, 16, 0n, false]);
+const [created] = parseEventLogs({ abi, logs: receipt.logs, eventName: "VolumeCreated" });
+const { volumeId, batchId } = created.args;
+```
+
+**ethers**
+
+```js
+const receipt = await send(registry.createVolume(signer.address, depth, 16, 0, false));
+const created = receipt.logs
+  .map((log) => registry.interface.parseLog(log))
+  .find((e) => e?.name === "VolumeCreated");
+const { volumeId, batchId } = created.args;
+```
+<!-- /tabs -->
+
+Parameters for `createVolume` on this deployment:
+
+- `depth`: the batch holds `2^depth` chunks. Choose it from [§16](#16-cost-estimation). It must exceed `bucketDepth`, so the minimum is 17.
+- `bucketDepth`: `16`, Postage's `minimumBucketDepth()` on Sepolia.
+- `ttlExpiry`: a unix timestamp after which the volume retires, or `0` for none.
+- `immutableBatch`: `false` overwrites the oldest chunks when the batch is full; `true` rejects new uploads when full.
+
+You now have a volume. Its `volumeId` identifies it to the registry; its `batchId` is the Postage batch you upload to.
+
+### Next
+
+- **Upload** to the batch with Bee, using `batchId` and the chunk-signer key ([§18](#18-uploading-to-swarm-with-bee)).
+- **Keep it funded.** Top-ups happen only when someone calls `trigger` ([§8](#8-keeping-a-volume-funded)).
+- **Watch the allowance.** When it runs out, top-ups stop ([§16](#16-cost-estimation)).
+
+## 2. Contract addresses
+
+### Sepolia testnet (chain ID 11155111), release `v2-rc4`
+
+| | |
+|---|---|
+| `VolumeRegistry` | `0xe491308994af391a32191a8c380ca818dad332a4` |
+| `PostageStamp` | `0xcdfdC3752caaA826fE62531E0000C40546eC56A6` |
+| BZZ (Sepolia test token, "sBZZ") | `0x543dDb01Ba47acB11de34891cD86B675F04840db` |
+| `PriceOracle` | `0x95Dc18380e92C13E4F8a4e94C99FB1b97250174B` |
+| `graceBlocks` | `300` (≈ 1 h at 12-second blocks) |
+| First block, for log queries | `12052651` |
+
+The short `graceBlocks` lets top-up and expiry cycles be observed on a testnet timescale.
+
+**Superseded releases.** `v2-rc1`, `v2-rc2` and `v2-rc3` are earlier Sepolia deployments and are no longer maintained. An earlier v1 registry exists on Gnosis Chain. It has different semantics, including unilateral ownership transfer, and is not covered by this documentation. Do not use any of them for new work. [`contracts/deployments/sepolia/VolumeRegistry.json`](../contracts/deployments/sepolia/VolumeRegistry.json) always names the current Sepolia release.
+
+### ABI and Solidity interfaces
+
+The `abi` field of the release's deployment record is the complete ABI. Pin it to the release tag:
+
+```sh
+curl -s https://raw.githubusercontent.com/shtukaresearch/swarm-volume-registry/v2-rc4/contracts/deployments/sepolia/VolumeRegistry-v2-rc4.json \
+  | jq .abi > VolumeRegistry.abi.json
+```
+
+The public surface is also declared per actor as Solidity interfaces in [`contracts/src/interfaces/`](https://github.com/shtukaresearch/swarm-volume-registry/tree/v2-rc4/contracts/src/interfaces):
+
+| Interface | Contents |
+|---|---|
+| `IVolumeRegistryViews` | Every type and enum, event, error, wiring getter and view. The read side shared by all actors. |
+| `IVolumeRegistryOwner` | `createVolume`, `registerVolume`, `importVolume`, `deleteVolume`, `designateFundingWallet`, `revoke` |
+| `IVolumeRegistryPayer` | `confirmAuth`, `revoke` |
+| `IVolumeRegistryKeeper` | `trigger(bytes32)`, `trigger(bytes32[])`, `reap` |
+| `IVolumeRegistry` | All of the above |
+
+The actor interfaces contain write functions only; pair one with `IVolumeRegistryViews`. Each function's NatSpec states its preconditions, errors and events. To use them from a contract in a Foundry project:
+
+```sh
+forge install shtukaresearch/swarm-volume-registry@v2-rc4
+echo 'swarm-volume-registry/=lib/swarm-volume-registry/contracts/src/' >> remappings.txt
+```
+
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.19;
+
+import {IVolumeRegistryViews} from "swarm-volume-registry/interfaces/IVolumeRegistryViews.sol";
+
+contract VolumeCheck {
+    address constant REGISTRY = 0xE491308994aF391a32191A8c380ca818dad332A4;
+
+    function isActive(bytes32 volumeId) external view returns (bool) {
+        return IVolumeRegistryViews(REGISTRY).getVolume(volumeId).status
+            == IVolumeRegistryViews.Status.Active;
+    }
+}
 ```
 
 ## 3. Concepts
 
-- **Volume.** A registry-tracked object, 1:1 with a Postage batch, identified by a `bytes32 volumeId` that is exactly Postage's `batchId`. A volume cannot rebind to a new batch; if the batch dies, the volume retires.
-- **Owner.** The address that manages the volume's lifecycle: create, delete, transfer ownership, designate a payer. Also signs chunks in the common case (see §4).
-- **Funding wallet / payer.** The address that holds BZZ and has approved the registry to pull from it. Authorized once via a two-sided handshake; revocable by either side at any time.
-- **Keeper.** Anyone. Calls `trigger(volumeId)` (or its batched form) and the registry forwards a bounded topup to Postage out of the payer's allowance. This project runs an altruistic keeper on approximately hourly cadence against the Gnosis deployment. You may run your own keeper, or call `trigger` yourself whenever you like; the contract makes no assumptions about who does it.
+`VolumeRegistry` keeps Swarm postage batches alive. It wraps each batch in an on-chain *volume* that has an owner, a separately authorized payer, and a permissionless keeper API. The contract has no owner or admin, is not upgradeable, and has no mutable parameters.
+
+- **Volume.** A registry record bound to one Postage batch for its whole life. It is identified by `volumeId`.
+- **`volumeId` is not the batch ID.** `volumeId = keccak256(abi.encode(owner, nonce))`, where `nonce` is the owner's account nonce before the creating call. The batch is `batchId`, which Postage assigns. One batch can underlie several volumes, of different owners or of the same owner. Use `volumeId` with the registry and `batchId` with Postage and Bee.
+- **Owner.** The address that made the creating call. The owner is permanent: v2 has no ownership transfer. The owner creates, imports and deletes volumes, and designates a payer.
+- **Chunk signer.** The Postage batch owner: the key that signs uploaded chunks. For `createVolume` the owner chooses it. For an imported batch it is read from Postage. The registry never needs its signature.
+- **Payer ("funding wallet").** Holds BZZ and has approved the registry. Authorized by a two-step handshake and revocable by either side.
+- **Account.** `accounts[owner] = (payer, active, nonce)`. One per owner. The payer is looked up at trigger time, so a single `revoke` affects every volume of that owner.
+- **Keeper.** Anyone who calls `trigger`. A keeper pays gas only and needs no authorization.
+- **Units.** BZZ amounts are in PLUR (1 BZZ = 10¹⁶ PLUR). Postage prices are in PLUR per chunk per block.
 
 ## 4. Role profiles
 
-Two configurations cover the common cases.
+### Profile A: single key
 
-### Profile A — single EOA
+The owner, payer and chunk signer are the same EOA.
 
-Owner and payer are the same EOA. Chunk signing is done by the same key. One transaction costs one signature.
+- **Use for:** experiments, development, demos.
+- **If the key is compromised:** everything is exposed. The attacker can create volumes up to the outstanding allowance, delete volumes, and sign chunks.
 
-- **When to use:** small or experimental volumes, development setups, demos.
-- **Blast radius if the key is compromised:** total. The attacker can create volumes that drain your allowance, `deleteVolume` existing ones, and sign arbitrary chunks.
+### Profile B: Safe as payer
 
-### Profile B — Safe-funded
+The owner is an EOA, which also signs chunks. The payer is a Safe or another smart account that can call `approve` and `confirmAuth`.
 
-Owner is an EOA; payer is a Safe (or any smart-contract wallet that can execute ERC20 `approve` and an arbitrary call). Chunk signing is still done by the owner EOA.
+- **Use for:** any volume worth protecting.
+- **If the owner key is compromised:** the attacker can spend payer funds up to the Safe's current allowance to the registry. Keep that allowance near projected needs rather than `type(uint256).max`. A single `revoke(owner)` from the Safe stops all top-ups for the owner. Because the owner here is also the chunk signer, the attacker can also call `PostageStamp.increaseDepth` directly, which makes the next trigger retire the volume (`DepthChanged`).
+- **If the Safe is compromised:** that is outside what the registry protects.
 
-- **When to use:** any volume worth protecting. The Safe holds BZZ and the allowance; the owner EOA can only cause spending up to the outstanding allowa\nce.
-- **Blast radius if the owner key is compromised:** First, the volume itself, via the upload signer calling `increaseDepth` directly on the `Postage` contract. If the upload signer key is compromised, there is nothing you can do to prevent this since owner keys cannot be cycled upstream. Second, payer assets bounded by the Safe's current allowance to the registry. Mitigated by (a) keeping the allowance sized to near-term needs rather than `type(uint256).max`, and (b) revoking the account in a single Safe transaction, which kills topups across every volume under the pair.
-- **Blast radius if the Safe is compromised:** outside the registry's protection boundary.
+An owner separate from the chunk signer is supported but is advanced usage.
 
-Separate chunk-signer addresses (owner ≠ signer) are supported by the contract but considered advanced usage, and do not contain this risk: the signer holds every batch-owner power on Postage regardless of what the registry permits. See [`DESIGN.md`](./DESIGN.md) §5.
+## 5. Importing an existing batch
 
-## 5. Setup
+Two entry points bring an existing, live Postage batch under management. Both require the caller to have an active account. Neither requires any relation between the caller and the batch owner. `chunkSigner` and `depth` are read from Postage.
 
-### 5.1 Single EOA (Profile A)
+| | `registerVolume(batchId, ttlExpiry)` | `importVolume(batchId, ttlExpiry)` |
+|---|---|---|
+| Moves BZZ | No | Yes: tops the batch up to the `graceBlocks` target in the same transaction |
+| Fails if the top-up cannot happen | No. The volume is recorded; later triggers may skip. | Yes: reverts `ImportTopupFailed` and nothing persists |
+| Survival guarantee ([§15](#15-survival-guarantee)) | Only after the first successful top-up | From the transaction onward |
+| Use when | You only want the registry to track the batch for now | You want the batch funded now, or nothing |
 
-All four calls are from the same EOA.
+Both revert `BatchNotLive` if the batch does not exist or is exhausted, and `BatchDepthTooSmall` if its depth does not exceed Postage's `minimumBucketDepth` (16).
 
-```sh
-export REGISTRY=0x...         # §2
-export BZZ=0x...              # §2
-export POSTAGE=0x...          # §2
-export YOU=0x...              # your EOA
-export AMOUNT=...             # BZZ allowance in PLUR; sized per §12
-
-# 1. Approve registry to pull BZZ on your behalf.
-cast send $BZZ "approve(address,uint256)" $REGISTRY $AMOUNT
-
-# 2. Designate yourself as your own payer.
-cast send $REGISTRY "designateFundingWallet(address)" $YOU
-
-# 3. Confirm the designation (activates the account).
-cast send $REGISTRY "confirmAuth(address)" $YOU
-
-# 4. Create a volume.
-#    depth:            log2(chunk count); see §12
-#    bucketDepth:      16  (fixed by the PostageStamp deployment)
-#    ttlExpiry:        unix seconds, or 0 for no expiry
-#    immutableBatch:   false (evict oldest on overflow) or true (reject new uploads when full)
-cast send $REGISTRY \
-  "createVolume(address,uint8,uint8,uint64,bool)" \
-  $YOU 22 16 0 false
-```
-
-The `volumeId` is returned from `createVolume` and emitted as the indexed first topic of `VolumeCreated`. Pull it from the transaction receipt:
+<!-- tabs -->
+**cast**
 
 ```sh
-cast receipt <TX_HASH> --json | jq -r '.logs[] | select(.topics[0] == "<VolumeCreated topic>") | .topics[1]'
+cast send --json $REGISTRY "importVolume(bytes32,uint64)" $BATCH_ID 0 \
+  | jq -r --arg t "$(cast sig-event 'VolumeImported(bytes32,address,bytes32,address,uint8,uint64,uint256)')" \
+       '.logs[] | select(.topics[0] == $t) | .topics[1]'
 ```
 
-Self-designation still requires the handshake in v1 — there is no short-circuit for owner == payer. This is deferred to v2.
+**web3.py**
 
-### 5.2 Safe-funded (Profile B), batched via Safe Transaction Service
+```python
+receipt = send(registry.functions.importVolume(batch_id, 0))
+(imported,) = registry.events.VolumeImported().process_receipt(receipt, errors=DISCARD)
+volume_id = imported["args"]["volumeId"]
+```
 
-Two state changes need to land atomically on the Safe side: `BZZ.approve(registry, amount)` and `VolumeRegistry.confirmAuth(owner)`. The owner's `designateFundingWallet` is a separate EOA transaction.
+**viem**
+
+```js
+const receipt = await send(registry, "importVolume", [batchId, 0n]);
+const [imported] = parseEventLogs({ abi, logs: receipt.logs, eventName: "VolumeImported" });
+```
+
+**ethers**
+
+```js
+const receipt = await send(registry.importVolume(batchId, 0));
+const imported = receipt.logs.map((l) => registry.interface.parseLog(l)).find((e) => e?.name === "VolumeImported");
+```
+<!-- /tabs -->
+
+Like `trigger`, `importVolume` costs much more when it tops up than when the batch is already at target, so its gas estimate depends on the state at the moment of estimation ([§8](#8-keeping-a-volume-funded)).
+
+Anyone with an active account can register any live batch, so a batch you own may also underlie other people's volumes. Top-ups are idempotent per batch: whichever volume is triggered first pays, and the others find nothing to pay. Do not assume a batch maps to one volume.
+
+## 6. Safe as payer
+
+This is Profile B. The owner EOA calls `designateFundingWallet(SAFE)`. The Safe then executes two calls, ideally in one Safe transaction through `MultiSendCallOnly`:
+
+1. `BZZ.approve(REGISTRY, AMOUNT)`
+2. `VolumeRegistry.confirmAuth(OWNER)`
+
+On success the registry emits `AccountActivated(OWNER, SAFE)`. The owner then calls `createVolume` as in [§1](#1-quickstart).
+
+With the Safe Protocol Kit (tested with `@safe-global/protocol-kit` 8.0), signing with a Safe owner key:
+
+```js
+import Safe from "@safe-global/protocol-kit";
+import { encodeFunctionData, erc20Abi, parseAbi } from "viem";
+
+const kit = await Safe.init({ provider: RPC_URL, signer: SAFE_OWNER_PRIVATE_KEY, safeAddress: SAFE });
+const tx = await kit.createTransaction({
+  transactions: [   // more than one → batched through MultiSendCallOnly
+    { to: BZZ, value: "0",
+      data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [REGISTRY, AMOUNT] }) },
+    { to: REGISTRY, value: "0",
+      data: encodeFunctionData({ abi: parseAbi(["function confirmAuth(address owner)"]),
+                                 functionName: "confirmAuth", args: [OWNER] }) },
+  ],
+});
+const signed = await kit.signTransaction(tx);
+await kit.executeTransaction(signed);   // a 1-of-1 Safe; otherwise collect signatures first
+```
+
+For a Safe with a threshold above one, propose the same transaction to the Safe Transaction Service with `@safe-global/api-kit`, or build it in the Safe web app's Transaction Builder, and collect signatures there. See the [Safe documentation](https://docs.safe.global).
+
+Size `AMOUNT` to cover a bounded period ([§16](#16-cost-estimation)) rather than `type(uint256).max`. The allowance is the most a compromised owner key can spend.
+
+## 7. Reading state
+
+| View | Returns |
+|---|---|
+| `getVolume(volumeId)` | `VolumeView`. An unknown ID returns zeroes with `status = 0` (`None`). |
+| `getActiveVolumes(offset, limit)` | `VolumeView[]`, a page of the active set. Order is not stable across retirements. |
+| `getActiveVolumeCount()` | Size of the active set |
+| `getAccount(owner)` | `Account(payer, active, nonce)` |
+| `designated(owner)` | The designated payer before confirmation, or `0x0` |
+
+`VolumeView` is `(volumeId, batchId, owner, payer, chunkSigner, createdAt, ttlExpiry, depth, status, accountActive)`. `payer` and `accountActive` are resolved from the owner's account at read time.
+
+<!-- tabs -->
+**cast**
 
 ```sh
-export REGISTRY=0x...
-export BZZ=0x...
-export SAFE=0x...              # your Safe
-export OWNER=0x...              # your owner EOA
-export AMOUNT=...
+VIEW="(bytes32,bytes32,address,address,address,uint64,uint64,uint8,uint8,bool)"
+cast call $REGISTRY "getVolume(bytes32)($VIEW)" $VOLUME_ID
+cast call $REGISTRY "getActiveVolumeCount()(uint256)"
+cast call $REGISTRY "getActiveVolumes(uint256,uint256)($VIEW[])" 0 100
+cast call $REGISTRY "getAccount(address)((address,bool,uint64))" $YOU
 
-# Step 1 — from the owner EOA.
-cast send $REGISTRY "designateFundingWallet(address)" $SAFE
+# The batch itself, from Postage. Remaining per-chunk balance = normalisedBalance − currentTotalOutPayment.
+cast call $POSTAGE "batches(bytes32)(address,uint8,uint8,bool,uint256,uint256)" $BATCH_ID
+cast call $POSTAGE "currentTotalOutPayment()(uint256)"
 ```
 
-Step 2 is a Safe transaction wrapping two inner calls inside a single `delegatecall` to `MultiSendCallOnly`:
+**web3.py**
 
-- `to=$BZZ, value=0, data=approve(REGISTRY, AMOUNT)`, operation `CALL`
-- `to=$REGISTRY, value=0, data=confirmAuth(OWNER)`, operation `CALL`
+```python
+v = registry.functions.getVolume(volume_id).call()   # tuple, in VolumeView order
+volume_id, batch_id, owner, payer, signer, created_at, ttl, depth, status, active = v
 
-Propose it via the Safe Transaction Service (`https://safe-transaction-gnosis-chain.safe.global`) and collect signatures through the normal Safe flow, or construct and submit directly with the Safe SDK. Both inner calls land in a single confirmed transaction; `AccountActivated(OWNER, SAFE)` is emitted on success.
+count = registry.functions.getActiveVolumeCount().call()
+page = registry.functions.getActiveVolumes(0, 100).call()
+payer, active, nonce = registry.functions.getAccount(me.address).call()
+```
 
-Step 3 — `createVolume` — is from the owner EOA, unchanged from §5.1 step 4.
+**viem**
 
-When allocating the allowance (`$AMOUNT`), prefer a bounded figure covering your projected next-N-days drain (see §12) over `type(uint256).max`. The allowance is the per-pair drain ceiling under owner-key compromise.
+```js
+const v = await client.readContract({ ...registry, functionName: "getVolume", args: [volumeId] });
+// { volumeId, batchId, owner, payer, chunkSigner, createdAt, ttlExpiry, depth, status, accountActive }
+const page = await client.readContract({ ...registry, functionName: "getActiveVolumes", args: [0n, 100n] });
+```
 
-## 6. API reference
+**ethers**
 
-All functions live on the single `VolumeRegistry` contract. Preconditions listed are the user-facing ones; see [`DESIGN.md`](./DESIGN.md) §7, §8 for authoritative semantics.
+```js
+const v = await registry.getVolume(volumeId);   // Result; v.status, v.batchId, … or v.toObject()
+const page = await registry.getActiveVolumes(0, 100);
+```
+<!-- /tabs -->
 
-### 6.1 Owner functions
+Past events need an RPC endpoint that serves `eth_getLogs` back to block `12052651`. Both creating events index `volumeId`, `owner` and `batchId`, so you can filter on any of them.
+
+### Predicting the next volume ID
+
+A creating call returns `volumeId`, but a return value is not available from a receipt, which is why the examples read it from the event. It can also be computed before sending: it is `keccak256(abi.encode(owner, nonce))`, with `nonce` from `getAccount(owner)`, provided the owner's transactions land in order.
+
+<!-- tabs -->
+**cast**
+
+```sh
+NONCE=$(cast call $REGISTRY "getAccount(address)((address,bool,uint64))" $YOU | tr -d '()' | cut -d, -f3 | tr -d ' ')
+cast keccak $(cast abi-encode "f(address,uint64)" $YOU $NONCE)
+```
+
+**web3.py**
+
+```python
+nonce = registry.functions.getAccount(me.address).call()[2]
+next_volume_id = w3.keccak(encode(["address", "uint64"], [me.address, nonce]))
+```
+
+**viem**
+
+```js
+const { nonce } = await client.readContract({ ...registry, functionName: "getAccount", args: [account.address] });
+const nextVolumeId = keccak256(encodeAbiParameters([{ type: "address" }, { type: "uint64" }], [account.address, nonce]));
+```
+
+**ethers**
+
+```js
+const { nonce } = await registry.getAccount(signer.address);
+const nextVolumeId = keccak256(AbiCoder.defaultAbiCoder().encode(["address", "uint64"], [signer.address, nonce]));
+```
+<!-- /tabs -->
+
+## 8. Keeping a volume funded
+
+Top-ups happen only when someone calls `trigger(volumeId)`. Anyone can call it for any volume and pays only gas; the BZZ comes from the volume's payer. Calling it when nothing is due changes nothing.
+
+The maintainers run an altruistic keeper against the current Sepolia release on a best-effort basis. Do not rely on it for anything you care about: run a keeper yourself or arrange for one you trust. [Running a keeper](./KEEPERS.md) covers the keeper interface, scheduling, gas and monitoring.
+
+To top up a volume by hand:
+
+<!-- tabs -->
+**cast**
+
+```sh
+cast send $REGISTRY "trigger(bytes32)" $VOLUME_ID
+```
+
+**web3.py**
+
+```python
+receipt = send(registry.functions["trigger(bytes32)"](volume_id))
+```
+
+**viem**
+
+```js
+const receipt = await send(registry, "trigger", [volumeId]);
+```
+
+**ethers**
+
+```js
+const receipt = await send(registry["trigger(bytes32)"](volumeId));   // overloaded: name the signature
+```
+<!-- /tabs -->
+
+The transaction succeeds whatever state the volume is in. Its events say what happened: `Toppedup`, `TopupSkipped` with a reason, `VolumeRetired`, or nothing if no top-up was due ([§10](#10-events-and-reason-codes)). Its gas cost depends on whether a top-up is due when it executes, so a gas estimate taken just after a top-up can be far too low ([Running a keeper](./KEEPERS.md#gas-usage)).
+
+## 9. API reference
+
+All functions are on the single `VolumeRegistry` contract. Signatures are exact.
+
+### 9.1 Owner
 
 ```solidity
-function createVolume(
-    address chunkSigner,      // pass your own address; see §4
-    uint8   depth,            // 1 << depth chunks; §12
-    uint8   bucketDepth,      // 16 on Gnosis; matches PostageStamp
-    uint64  ttlExpiry,        // 0 = no expiry
-    bool    immutableBatch    // true = reject overflow; false = evict oldest
-) external returns (bytes32 volumeId);
+function createVolume(address chunkSigner, uint8 depth, uint8 bucketDepth, uint64 ttlExpiry, bool immutableBatch)
+    external returns (bytes32 volumeId);
 ```
-Preconditions: `accounts[msg.sender].active == true`; payer has approved at least `graceBlocks × currentPrice × (1 << depth)` BZZ to the registry. The full initial topup is pulled from the payer at creation. Emits `VolumeCreated`.
+Mints a Postage batch owned by `chunkSigner` and records a volume owned by `msg.sender`. Charges `lastPrice × graceBlocks × 2^depth` PLUR to the caller's payer. Requires an active account. Emits `VolumeCreated`.
+
+```solidity
+function registerVolume(bytes32 batchId, uint64 ttlExpiry) external returns (bytes32 volumeId);
+function importVolume(bytes32 batchId, uint64 ttlExpiry) external returns (bytes32 volumeId);
+```
+Record an existing live batch as a volume owned by `msg.sender`. `importVolume` also tops it up atomically. See [§5](#5-importing-an-existing-batch). Both emit `VolumeImported`, and `importVolume` may also emit `Toppedup`.
 
 ```solidity
 function deleteVolume(bytes32 volumeId) external;
 ```
-Owner-only. Transitions the volume to `Retired.OwnerDeleted` and removes it from the active set. No on-chain refund — Postage has no reclaim path. Emits `VolumeRetired(id, OwnerDeleted)`.
+Owner only. Retires the volume (`OwnerDeleted`) and removes it from the active set. This is registry bookkeeping only: the batch is untouched and Postage has no refund path. It keeps its remaining balance until it expires, and other volumes on the same batch are unaffected.
 
 ```solidity
-function transferVolumeOwnership(bytes32 volumeId, address newOwner) external;
+function designateFundingWallet(address payer) external;   // address(0) clears
 ```
-Owner-only. The volume's payer lookup switches to `accounts[newOwner]`. Until the new owner has an active account, `trigger` calls emit `TopupSkipped(NoAuth)` and do not spend BZZ. Emits `VolumeOwnershipTransferred`.
-
-**v1 warning:** the recipient does not accept this transfer. If `newOwner` already has
-an active account, a keeper can immediately pull the next topup from that account's
-payer. Only transfer by prior agreement. A recipient of an unsolicited volume should
-delete that volume or revoke and permanently sever their payer authorization as
-described in §10.
+Sets `designated[msg.sender] = payer`. It grants nothing until the payer calls `confirmAuth(msg.sender)`. Emits `PayerDesignated`. Never reverts.
 
 ```solidity
-function designateFundingWallet(address payer) external;  // 0 to clear
+function revoke(address owner) external;   // also callable by the payer
 ```
-Unilateral owner action. Sets `designated[msg.sender] = payer`; the payer must then call `confirmAuth(msg.sender)` to activate. Emits `PayerDesignated`.
+See [§14](#14-revocation).
 
-### 6.2 Payer functions
+### 9.2 Payer
 
 ```solidity
 function confirmAuth(address owner) external;
 ```
-Requires `designated[owner] == msg.sender`. Overwrites any prior `accounts[owner]` atomically. Emits `AccountActivated`.
+Requires `designated(owner) == msg.sender`. Sets `accounts[owner] = (msg.sender, active = true)`, replacing any previous payer, and preserves the nonce. Emits `AccountActivated`.
 
 ```solidity
 function revoke(address owner) external;
 ```
-Callable by the owner or by the currently-confirmed payer. Sets `accounts[owner].active = false`. Does **not** retire any volumes — they coast on their remaining batch balance until the batch dies. Emits `AccountRevoked`.
+Callable by `owner` or by its current payer. Sets `active = false`. It does not clear the designation, the payer or the nonce, and does not retire volumes. Emits `AccountRevoked`.
 
-### 6.3 Keeper functions
+### 9.3 Keeper
 
 ```solidity
 function trigger(bytes32 volumeId) external;
 function trigger(bytes32[] calldata volumeIds) external;
 function reap(bytes32 volumeId) external;
 ```
-- `trigger(id)` — top up one volume. See §8 for semantics.
-- `trigger(ids[])` — `trigger(id)` on each id in order. From v2-rc4 there is no
-  per-item isolation: `trigger` reverts only on out-of-gas, a paused Postage, or a fault
-  ([ADR-0007](adr/0007-keeper-endpoints-revert-only-on-bugs.md)), and any revert rolls
-  back the whole batch. A successful receipt therefore covers every id, and
-  `eth_estimateGas` measures the real work. In v1 and up to v2-rc3, each item runs in a
-  `try/catch` that also absorbs an inner out-of-gas failure, so a successful receipt
-  does not prove every requested id was processed. See [KEEPERS.md](KEEPERS.md).
-- `reap(id)` — retire an `Active` volume if, and only if, its TTL has expired. It is an
-  idempotent no-op for inactive volumes and for active volumes whose TTL has not passed.
-  It does not inspect Postage batch death, owner, or depth.
+Permissionless. See [§8](#8-keeping-a-volume-funded) and [Running a keeper](./KEEPERS.md).
 
-### 6.4 Views
+### 9.4 Views and wiring
 
 ```solidity
-struct VolumeView {
-    bytes32 volumeId;
-    address owner;
-    address payer;          // resolved from accounts[owner]
-    address chunkSigner;
-    uint64  createdAt;
-    uint64  ttlExpiry;
-    uint8   depth;
-    uint8   status;         // 1 = Active, 2 = Retired
-    bool    accountActive;
-}
-
 function getVolume(bytes32 volumeId) external view returns (VolumeView memory);
 function getActiveVolumes(uint256 offset, uint256 limit) external view returns (VolumeView[] memory);
 function getActiveVolumeCount() external view returns (uint256);
 function getAccount(address owner) external view returns (Account memory);
+function designated(address owner) external view returns (address);
+function nextNonce() external view returns (uint256);   // salts minted batch IDs; unrelated to volume IDs
+
+function postage() external view returns (address);
+function bzz() external view returns (address);
+function graceBlocks() external view returns (uint64);
+function bzzPermitExpiry() external view returns (bool);
 ```
 
-`getActiveVolumes` paginates the active-volume index and returns one RPC round-trip worth of data per page. Suitable for dashboards and keeper-style enumeration.
+```solidity
+struct VolumeView {
+    bytes32 volumeId;
+    bytes32 batchId;
+    address owner;
+    address payer;          // accounts[owner].payer, read time
+    address chunkSigner;
+    uint64  createdAt;      // timestamp of the creating call (start of tracking, not batch age)
+    uint64  ttlExpiry;      // 0 = no expiry
+    uint8   depth;
+    Status  status;         // uint8 on the wire: 0 None, 1 Active, 2 Retired
+    bool    accountActive;  // accounts[owner].active, read time
+}
 
-## 7. Events
+struct Account {
+    address payer;
+    bool    active;
+    uint64  nonce;          // next creating call yields keccak256(abi.encode(owner, nonce))
+}
+```
 
-| Event | Emitted when |
+## 10. Events and reason codes
+
+| Event | topic0 | Emitted when |
+|---|---|---|
+| `VolumeCreated(bytes32 indexed volumeId, address indexed owner, bytes32 indexed batchId, address chunkSigner, uint8 depth, uint64 ttlExpiry)` | `0xffb4423d…6ea233` | `createVolume` succeeded |
+| `VolumeImported(bytes32 indexed volumeId, address indexed owner, bytes32 indexed batchId, address chunkSigner, uint8 depth, uint64 ttlExpiry, uint256 normalisedBalance)` | `0x12d8e0e1…5e951f` | `registerVolume` or `importVolume` succeeded. `normalisedBalance` is read before any top-up. |
+| `VolumeRetired(bytes32 indexed volumeId, uint8 reason)` | `0xb00942a6…8127f4` | The volume became Retired ([§13](#13-retirement)) |
+| `PayerDesignated(address indexed owner, address payer)` | `0x16b02f7a…987821` | `designateFundingWallet` |
+| `AccountActivated(address indexed owner, address indexed payer)` | `0xa812e6ae…3da1c7` | `confirmAuth` |
+| `AccountRevoked(address indexed owner, address indexed payer, address revoker)` | `0xe60b9497…3645ba` | `revoke` |
+| `Toppedup(bytes32 indexed volumeId, uint256 amount, uint256 newNormalisedBalance)` | `0xbbdb04f4…c0b674` | A trigger pulled `amount` PLUR from the payer into the batch |
+| `TopupSkipped(bytes32 indexed volumeId, uint8 reason)` | `0x15ac22a1…e672ba` | A trigger moved no BZZ for the reason given |
+
+Compute a full topic0 with `cast sig-event "<signature>"`, or read it from the ABI with your client library.
+
+**`TopupSkipped.reason`**
+
+| Value | Name | Meaning | Who acts |
+|---|---|---|---|
+| 1 | `NoAuth` | The owner's account is not active (revoked, or never activated) | Owner and payer |
+| 2 | `PaymentFailed` | The payer's BZZ balance or allowance is below the amount due | Payer |
+| 3 | `NotFound` | No volume has this ID | Whoever supplied the ID; it is wrong |
+| 4 | `NotActive` | The volume is Retired | Nobody: drop it from the list |
+
+**`VolumeRetired.reason`**
+
+| Value | Name |
 |---|---|
-| `VolumeCreated(bytes32 indexed volumeId, address indexed owner, address chunkSigner, uint8 depth, uint64 ttlExpiry)` | Owner created a volume. First indexed topic is the volumeId. |
-| `VolumeRetired(bytes32 indexed volumeId, uint8 reason)` | Volume transitioned to `Retired`. `reason` ∈ `{OwnerDeleted=1, VolumeExpired=2, BatchDied=3, DepthChanged=4, BatchOwnerMismatch=5}`. |
-| `VolumeOwnershipTransferred(bytes32 indexed volumeId, address indexed from, address indexed to)` | `transferVolumeOwnership` succeeded. |
-| `PayerDesignated(address indexed owner, address payer)` | Owner called `designateFundingWallet`. |
-| `AccountActivated(address indexed owner, address indexed payer)` | Payer confirmed; account is now `Active`. |
-| `AccountRevoked(address indexed owner, address indexed payer, address revoker)` | Either party called `revoke`. |
-| `Toppedup(bytes32 indexed volumeId, uint256 amount, uint256 newNormalisedBalance)` | A trigger pulled BZZ from the payer and forwarded to Postage. |
-| `TopupSkipped(bytes32 indexed volumeId, uint8 reason)` | A trigger ran but moved no BZZ. `reason` ∈ `{NoAuth=1, PaymentFailed=2}`, and from v2-rc4 also `{NotFound=3, NotActive=4}` for an id that is not an `Active` volume. A volume skipped for `NoAuth` or `PaymentFailed` remains `Active`. |
+| 1 | `OwnerDeleted` |
+| 2 | `VolumeExpired` |
+| 3 | `BatchDied` |
+| 4 | `DepthChanged` |
+| 5 | `BatchOwnerMismatch` |
 
-## 8. How topups work
+**`Status`**: 0 `None` (unknown ID), 1 `Active`, 2 `Retired`.
+
+Value 0 is never emitted for either reason enum.
+
+## 11. Errors and revert semantics
+
+`trigger` and `reap` never revert because of the state of a volume, an account or a payer: the outcome for each volume is reported by an event ([§10](#10-events-and-reason-codes)). They revert only on out-of-gas, a paused `PostageStamp` or BZZ token, or a fault (details in [Running a keeper](./KEEPERS.md#revert-semantics)).
+
+### Owner and payer endpoints revert with named errors
+
+| Error | Selector | Raised by | Meaning |
+|---|---|---|---|
+| `AccountNotActive()` | `0x4d571464` | `createVolume`, `registerVolume`, `importVolume` | Caller has no active account: run the [§1](#1-quickstart) handshake |
+| `ZeroAddress()` | `0xd92e233d` | `createVolume` | `chunkSigner` is `0x0` |
+| `BatchNotLive()` | `0xe004958b` | `registerVolume`, `importVolume` | Batch missing or exhausted |
+| `BatchDepthTooSmall()` | `0xe875cf5f` | `registerVolume`, `importVolume` | Batch depth ≤ Postage `minimumBucketDepth` |
+| `ImportTopupFailed()` | `0xf60090aa` | `importVolume` | The top-up could not happen: payer short of balance or allowance, or `ttlExpiry` already past |
+| `NotVolumeOwner()` | `0x431be6b7` | `deleteVolume` | Caller is not the owner, or the ID is unknown |
+| `VolumeNotActive()` | `0x2f607c28` | `deleteVolume` | Already Retired |
+| `NotDesignated()` | `0x69f3dfcd` | `confirmAuth` | Caller is not `designated(owner)` |
+| `NotAuthorizedToRevoke()` | `0xb4a8529c` | `revoke` | Caller is neither the owner nor its payer |
+
+`createVolume` does not precheck the payer. If the payer's balance or allowance is short, it reverts with the token's error, such as `ERC20: insufficient allowance` on Sepolia BZZ. Postage's own errors, such as a paused contract, propagate unchanged.
+
+Decoding: viem names the error as `error.cause.data.errorName`; ethers as `error.revert.name`; web3.py raises `ContractCustomError` with the selector in `.data`; `cast` prints `custom error 0x…`. Look the selector up in the table above.
+
+## 12. How top-ups work
 
 On each `trigger(volumeId)` the registry:
 
-1. Checks the volume is still `Active` and its Postage batch still exists.
-2. Retires the volume if the Postage batch owner no longer matches the recorded chunk
-   signer, its depth changed, or its TTL expired.
-3. Computes `target = graceBlocks × currentPrice` (per chunk).
-4. Reads the batch's current `normalisedBalance`. If it is already ≥ `target`, returns as a no-op.
-5. Otherwise, pulls `deficit × (1 << depth)` BZZ from the payer via `transferFrom` and calls `PostageStamp.topUp(volumeId, deficit)`.
+1. Loads the volume. Unknown → `TopupSkipped(NotFound)`; Retired → `TopupSkipped(NotActive)`. Stop.
+2. Reads the batch from Postage. Missing or expired → retire `BatchDied`. Stop.
+3. Batch owner ≠ recorded chunk signer → retire `BatchOwnerMismatch`. Stop.
+4. Batch depth ≠ recorded depth → retire `DepthChanged`. Stop.
+5. `ttlExpiry` set and passed → retire `VolumeExpired`. Stop.
+6. Owner's account inactive → `TopupSkipped(NoAuth)`. Stop. The volume stays Active.
+7. `target = lastPrice × graceBlocks`; `remaining = normalisedBalance − currentTotalOutPayment`; `deficit = max(0, target − remaining)`. If `deficit == 0`, stop silently.
+8. `amount = deficit × 2^depth`. If the payer's balance or allowance is below `amount` → `TopupSkipped(PaymentFailed)`. Stop. The volume stays Active.
+9. Pulls `amount` from the payer, calls `PostageStamp.topUp(batchId, deficit)`, emits `Toppedup`.
 
-This makes triggers **idempotent within a block at constant price**: calling `trigger(id)` twice in a row after a successful topup moves no BZZ on the second call. The same property holds any time the batch is already at or above target.
+Retirement checks come before the auth and payment checks, so a lapsed account never hides a dead batch.
 
-If the payer's balance or allowance is insufficient, the trigger emits `TopupSkipped(PaymentFailed)` and leaves the volume `Active`. Topups resume automatically on the next trigger after the payer tops up or re-approves.
+Triggers are idempotent within a block at a constant price. A second trigger in the same block finds no deficit, and so does a trigger of another volume on the same batch. Across blocks, each trigger pays only what has drained since the last one. Nothing is lost by triggering too often except gas.
 
-If the account is revoked, the trigger emits `TopupSkipped(NoAuth)` and leaves the volume `Active`. The volume then coasts on its remaining batch balance until the batch dies.
+After a `NoAuth` or `PaymentFailed` skip, top-ups resume on the next trigger once the account is re-activated or the payer is funded. Until then the batch drains towards death.
 
-## 9. Retirement
+## 13. Retirement
 
-Retirement is terminal. A retired volume cannot be revived, cannot be triggered, and is removed from the active set.
+Retirement is terminal. A Retired volume cannot be revived, is never topped up again, and leaves the active set. Its ID is never reused.
 
-| Reason | Cause | Detection |
+| Reason | Cause | Detected by |
 |---|---|---|
-| `OwnerDeleted` | Owner called `deleteVolume`. | Direct. |
-| `VolumeExpired` | `ttlExpiry != 0 && now ≥ ttlExpiry`. | Next `trigger` or `reap`. |
-| `BatchDied` | Postage reports the batch as expired or nonexistent. | Next `trigger`. |
-| `DepthChanged` | The chunk signer called `PostageStamp.increaseDepth` directly, diverging the batch from the volume's recorded depth. | Next `trigger`. |
-| `BatchOwnerMismatch` | Postage reports a batch owner different from the recorded chunk signer. This is a defensive check for upstream changes. | Next `trigger`. |
+| `OwnerDeleted` | Owner called `deleteVolume` | Immediate |
+| `VolumeExpired` | `ttlExpiry != 0` and `block.timestamp ≥ ttlExpiry` | Next `trigger` or `reap` |
+| `BatchDied` | Postage reports the batch missing or its balance exhausted | Next `trigger` |
+| `DepthChanged` | The chunk signer called `PostageStamp.increaseDepth` directly | Next `trigger` |
+| `BatchOwnerMismatch` | Postage reports a different batch owner. Defensive; current Postage cannot do this. | Next `trigger` |
 
-The correct response to any retirement is to create a new volume. Depth changes in particular are not a v1-supported operation — create a new, larger volume and migrate off-chain.
+To continue after a retirement, create or import a new volume. After `DepthChanged`, the same batch, now deeper, can be registered again under a new volume ID.
 
-## 10. Revocation
+## 14. Revocation
 
-`revoke(owner)` is the emergency off-switch for a (owner, payer) pair.
+`revoke(owner)` is the emergency stop for an owner's account.
 
-- Callable by either the owner or the currently-confirmed payer.
-- Flips `accounts[owner].active` to `false` in O(1).
-- Affects **every volume** under that pair — the payer is resolved at trigger time from `accounts[owner]`, not stored per volume.
-- Does **not** retire any volumes. Each volume continues to drain its existing batch balance until the batch dies (`BatchDied` retirement on the next trigger).
+- Callable by the owner or by the confirmed payer, in one transaction.
+- Sets `accounts[owner].active = false`. Every volume of that owner then skips with `NoAuth`, because the payer is resolved at trigger time.
+- Does **not** retire volumes. They keep their remaining batch balance until it runs out (`BatchDied`). Call `deleteVolume` on each if you want them retired now. That stops tracking but does not destroy the batch.
+- Does **not** clear `designated[owner]`. The designated payer can re-activate with `confirmAuth(owner)` without the owner doing anything.
 
-If you want the batches dead sooner, `deleteVolume` each one after revoking.
+For a permanent separation: the owner calls `designateFundingWallet(address(0))` and either side calls `revoke(owner)`. As a separate defense, the payer sets its BZZ allowance to the registry to zero. Clearing the designation alone does not deactivate an active account.
 
-Re-activating the same (owner, payer) pair requires a fresh `confirmAuth(owner)` call
-from the payer. In v1, `revoke` does **not** clear `designated[owner]`, so the designated
-payer can re-activate the account without another owner transaction. An owner who wants
-permanent severance must both call `designateFundingWallet(address(0))` and revoke the
-account; clearing the designation alone does not deactivate it. The payer should clear
-the registry's BZZ allowance as a separate defense in depth.
+To switch to a new payer, the owner designates it and the new payer calls `confirmAuth`. This replaces the old payer atomically. The nonce, and so the sequence of future volume IDs, is preserved.
 
-For an unsolicited ownership transfer, the new owner can call `deleteVolume` for that
-volume. For an immediate pair-wide stop, call `revoke(owner)` and
-`designateFundingWallet(address(0))`, and have the payer clear its allowance.
+v2 has no ownership transfer, so no one can attach a volume to your account or make your payer fund someone else's volume. The only volumes that charge your payer are those created by the owner you confirmed.
 
-## 11. Survival guarantee
+## 15. Survival guarantee
 
-Under the worst-case price schedule permitted by Swarm's `PriceOracle`, a volume that was last successfully topped up at block `t0` is guaranteed to survive at least
+If a volume was last created, imported or topped up at block `t0`, its batch survives at least `f × graceBlocks` blocks after `t0` even if nobody triggers it again. The bound holds under the fastest price rise Swarm's `PriceOracle` permits.
 
-```
-f × graceBlocks  blocks  before its batch dies
-```
+For this deployment (`graceBlocks = 300`): `f ≈ 0.9992`, so at least ≈ 299.8 blocks, about 60 minutes at 12-second blocks. Under flat or falling prices the runway is at least the full `graceBlocks`. A volume created with `registerVolume` has no guarantee until its first successful top-up.
 
-where `f ≈ 0.9567` for `graceBlocks = 17280` on Gnosis Chain. In wall-clock terms at 5-second blocks: promised runway is ~24 h, worst-case runway is ~22.95 h. Under flat or falling prices the runway meets or exceeds 24 h.
+The bound assumes the PriceOracle's rate-limited path. An account with `PRICE_ORACLE_ROLE` can set the price directly. A paused Postage blocks top-ups while batches keep draining. If Postage's administrator raises `minimumValidityBlocks` above this deployment's `graceBlocks`, top-ups revert until users move to a compatible deployment.
 
-This bound assumes the configured PriceOracle rate ceiling is respected and Postage
-remains available. An account with `PRICE_ORACLE_ROLE` can set a price outside that
-rate-limited path, and a paused Postage contract prevents topups. In addition,
-`PostageStamp.minimumValidityBlocks()` is mutable: if its administrator raises that
-floor above this registry's immutable `graceBlocks`, v1 topups revert until users move
-to a compatible registry deployment.
+Wall-clock time is not guaranteed: Sepolia block times vary. Trigger well inside the runway ([Running a keeper](./KEEPERS.md#scheduling)).
 
-See [`DESIGN.md`](./DESIGN.md) §10.1 for derivation.
+## 16. Cost estimation
 
-## 12. Cost estimation
+### BZZ for storage
 
-Two currencies are involved.
+**Pick a depth.** The effective capacity of a batch at each depth (unencrypted, no erasure coding) is:
 
-### BZZ — storage
+| `depth` | Effective volume | | `depth` | Effective volume |
+|---|---|---|---|---|
+| 17 | 44.70 kB | | 30 | 4.17 TB |
+| 18 | 6.66 MB | | 31 | 8.45 TB |
+| 19 | 112.06 MB | | 32 | 17.07 TB |
+| 20 | 687.62 MB | | 33 | 34.36 TB |
+| 21 | 2.60 GB | | 34 | 69.04 TB |
+| 22 | 7.73 GB | | 35 | 138.54 TB |
+| 23 | 19.94 GB | | 36 | 277.72 TB |
+| 24 | 47.06 GB | | 37 | 556.35 TB |
+| 25 | 105.51 GB | | 38 | 1.11 PB |
+| 26 | 227.98 GB | | 39 | 2.23 PB |
+| 27 | 476.68 GB | | 40 | 4.46 PB |
+| 28 | 993.65 GB | | 41 | 8.93 PB |
+| 29 | 2.04 TB | | | |
 
-**Step 1 — pick a depth from your target volume.** Swarm's effective batch volume at each `depth` (unencrypted, no erasure coding) is:
+Pick the smallest depth whose effective volume exceeds your payload. To store 1 GB you need `depth = 21`. Effective volume is far below `2^depth × 4 KiB` because chunks spread unevenly across buckets and a batch fills by bucket, not by chunk count. For encrypted or erasure-coded uploads, see the [upstream table](https://docs.ethswarm.org/docs/concepts/incentives/postage-stamps). Cost scales with `2^depth`, not with what you store.
 
-| `depth` | Effective volume |
-|---|---|
-| 17 | 44.70 kB |
-| 18 | 6.66 MB |
-| 19 | 112.06 MB |
-| 20 | 687.62 MB |
-| 21 | 2.60 GB |
-| 22 | 7.73 GB |
-| 23 | 19.94 GB |
-| 24 | 47.06 GB |
-| 25 | 105.51 GB |
-| 26 | 227.98 GB |
-| 27 | 476.68 GB |
-| 28 | 993.65 GB |
-| 29 | 2.04 TB |
-| 30 | 4.17 TB |
-| 31 | 8.45 TB |
-| 32 | 17.07 TB |
-| 33 | 34.36 TB |
-| 34 | 69.04 TB |
-| 35 | 138.54 TB |
-| 36 | 277.72 TB |
-| 37 | 556.35 TB |
-| 38 | 1.11 PB |
-| 39 | 2.23 PB |
-| 40 | 4.46 PB |
-| 41 | 8.93 PB |
-
-Pick the smallest `depth` whose effective volume exceeds your payload. Example: to store 1 GB you need `depth = 21` (≈ 2.60 GB effective); `depth = 20` at 687.62 MB is not enough. Effective volume is below the theoretical `(1 << depth) × 4 KiB` because chunks distribute unevenly across Swarm's neighbourhoods and a full batch is bucket-limited, not chunk-limited. For encrypted uploads or uploads with erasure coding, use the corresponding columns in the upstream table at <https://docs.ethswarm.org/docs/concepts/incentives/postage-stamps>.
-
-**Step 2 — estimate daily cost.** Postage's per-chunk per-block price is one number, read from the oracle:
+**Price it.** Read `lastPrice` from Postage, in PLUR per chunk per block:
 
 ```sh
-cast call $POSTAGE "lastPrice()(uint64)"              # current price, PLUR per chunk per block
-cast call $POSTAGE "priceOracle()(address)"           # the oracle
-cast call $REGISTRY "graceBlocks()(uint64)"           # 17280 on Gnosis
+cast call $POSTAGE "lastPrice()(uint64)"
+cast call $REGISTRY "graceBlocks()(uint64)"     # 300
 ```
 
-Formulas (all in PLUR = 10⁻¹⁶ BZZ):
+Formulas, in PLUR (10⁻¹⁶ BZZ). Sepolia has about 7200 blocks per day.
 
-- **Initial charge at `createVolume`:** `graceBlocks × currentPrice × (1 << depth)`.
-- **Steady-state drain rate:** `currentPrice × (1 << depth)` per block. On Gnosis (17280 blocks/day) the daily burn is `currentPrice × (1 << depth) × 17280` PLUR/day, or `currentPrice × (1 << depth) × 17280 × 10⁻¹⁶` BZZ/day.
-- **Per-topup charge:** up to the initial charge, usually less — the registry only tops up the observed deficit back to target.
+- **Initial charge** (`createVolume`): `lastPrice × graceBlocks × 2^depth`
+- **Drain rate:** `lastPrice × 2^depth` per block, so `lastPrice × 2^depth × 7200` per day
+- **Each top-up:** only what drained since the last one; at most the initial charge
 
-**Allowance sizing.** Compute your projected N-day drain at the current price, then multiply by a margin (e.g. 2×) to absorb price rises and let you skip re-approvals:
+**Size the allowance** for N days with a margin for price rises:
 
 ```
-allowance ≥  currentPrice × (1 << depth) × 17280 × N × 2
+allowance ≥ initial charge + lastPrice × 2^depth × 7200 × N × 2
 ```
 
-Larger allowances amortize re-approval overhead; smaller allowances cap the blast radius of owner-key compromise (§4 Profile B).
+A larger allowance means fewer re-approvals; a smaller one limits what a compromised owner key can spend. When the allowance runs out, triggers skip with `PaymentFailed` and the volume coasts on its remaining balance, about one `graceBlocks` runway.
 
-### xDAI — gas
+Gas for top-ups is paid by whoever calls `trigger`, not by the payer.
 
-Gnosis Chain gas costs are small. Exact numbers will be added once benchmarked; an individual `trigger` is designed to be cheaper than a direct `PostageStamp.topUp` call would be for the same outcome, because the registry batches allowance management. `trigger(bytes32[])` amortizes a further savings across the batch.
+## 17. Testnet tokens
 
-Your own gas budget only matters if you plan to call `trigger` yourself. In the common case where the altruistic hourly keeper is sufficient, gas is somebody else's problem.
+- **Sepolia ETH** for gas: the [Google Cloud Web3 Faucet](https://cloud.google.com/application/web3/faucet/ethereum/sepolia), or your RPC provider's faucet.
+- **Sepolia BZZ (sBZZ)** for storage: there is no faucet. Ask in the [official Swarm Discord](https://docs.ethswarm.org/docs/references/faq/). A small [sBZZ/WETH Uniswap v3 pool](https://sepolia.etherscan.io/address/0x88A3f8097f091f457a3bf22e9BECAbCbE873eC1b) exists, but its liquidity is not guaranteed and it has no convenient frontend.
 
-## 13. Uploading to Swarm with Bee
+The token at `0x543dDb01…40db` is the BZZ that Sepolia's `PostageStamp` accepts. Other tokens named BZZ on Sepolia will not work.
 
-The registry does not touch your upload path. It keeps your Postage batch alive; actually uploading data to it happens through a Bee node using the chunk-signer key associated with the batch.
+## 18. Uploading to Swarm with Bee
 
-Minimum setup:
+The registry only keeps the batch alive. Uploading goes through a Bee node whose key is the volume's chunk signer.
 
-1. **Run a light node.** `--full-node=false` is fine; full/ultralight distinctions do not matter for upload. See Bee's install and configuration documentation (<https://docs.ethswarm.org/docs/bee/installation>).
-2. **Fund the node's wallet with xDAI only.** The node needs a small amount of xDAI to deploy its chequebook contract on first run (one-time) and to pay ongoing transaction gas. It does **not** need BZZ. Storage is paid for by the registry's payer, not by the node.
-3. **Configure the node's signer key to match your volume's chunk signer.** In Profile A or Profile B this is your owner EOA. Bee reads its signer from a JSON keystore file placed at `<data-dir>/keys/swarm.key` (verify against your Bee version's documentation). Generate the keystore with `bee-clef` or any Ethereum keystore tool, drop the file at that path, and set the corresponding password through Bee's password config.
-4. **Upload.** Bee automatically discovers Postage batches whose `owner` matches the node's signer and treats them as usable for uploads. No manual batch registration on the node side is needed. Standard `bee-api` upload endpoints (`/bzz`, `/chunks`, `/bytes`) will select an appropriate batch when you supply the `swarm-postage-batch-id` header, or auto-select if you have only one usable batch.
+1. **Run a Bee node on the Sepolia testnet.** A light node is enough. See the [Bee documentation](https://docs.ethswarm.org/docs/bee/installation) for testnet configuration and a Sepolia RPC endpoint.
+2. **Fund the node with Sepolia ETH only.** It needs gas for its own transactions. It does not need BZZ for storage: the payer funds the batch through the registry.
+3. **Use the chunk-signer key as the node's key.** Bee keeps its Ethereum key as a JSON keystore in its data directory (`keys/swarm.key`; check your Bee version's documentation). The node's address must equal the volume's `chunkSigner` exactly: Postage checks `batch.owner` against the stamp signer.
+4. **Upload with the batch ID, not the volume ID.** Pass `batchId` from `getVolume` or the creating event in the `swarm-postage-batch-id` header of `/bzz`, `/bytes` or `/chunks`. Bee lists batches owned by its key under `GET /stamps` once it has synced the batch from the chain.
 
-The volume's `chunkSigner` address must equal the node's Ethereum address exactly; Postage checks `batch.owner == msg.sender` when minting and Bee checks the same equality when selecting batches.
+Do not call `increaseDepth` (Bee's "dilute") on a registry batch. The next trigger retires the volume as `DepthChanged`. Register the batch again afterwards if you want it maintained at the new depth.
 
-## 14. Not in v1
+## 19. Not in v2
 
-The following are intentionally out of scope for the first deployment:
+Deliberately out of scope:
 
-- **Depth changes after creation.** Create a new volume with the larger depth instead.
-- **Signer rotation.** The chunk signer is fixed per volume for its entire lifetime.
-- **Multiple payers per owner.** At most one active account per owner.
-- **Safe `AllowanceModule` payment path.** Payment is plain ERC20 `approve` / `transferFrom`.
-- **EIP-712 / off-chain auth.** All authorizations are on-chain.
-- **Admin or operator roles.** The contract has none; no upgradeability.
-- **Implicit self-designation** for the single-EOA profile. The handshake is uniform.
+- **Ownership transfer.** The owner is permanent. A future version may add transfer with explicit acceptance by the recipient.
+- **Depth changes.** Create a new volume of the size you need, or re-register after `increaseDepth` (see [§13](#13-retirement)).
+- **Signer rotation.** The chunk signer is fixed per batch by Postage.
+- **More than one payer per owner.** Use separate owner addresses.
+- **A Safe `AllowanceModule` payment path, or EIP-712 off-chain authorization.** Payment is ERC-20 `approve` and `transferFrom`, and authorization is on-chain.
+- **A shortcut for self-designation.** Profile A still needs both handshake steps.
+- **On-chain spam prevention for `registerVolume`.** The active set can contain volumes that never fund. Keepers should expect skips.
 
-See [`DESIGN.md`](./DESIGN.md) §13 for the full deferred-feature list.
+## 20. References
 
-## 15. References
-
-- [`DESIGN.md`](./DESIGN.md) — authoritative architecture, invariants, and derivations.
-- [Swarm documentation](https://docs.ethswarm.org) — upload semantics, batch utilization, Bee configuration.
-- [`ethersphere/storage-incentives`](https://github.com/ethersphere/storage-incentives) — `PostageStamp` and `PriceOracle` source.
-- [Safe documentation](https://docs.safe.global) — Safe Transaction Service and MultiSend encoding for Profile B.
+- [Running a keeper](./KEEPERS.md): operating a keeper, including revert handling and monitoring.
+- [GitHub repository](https://github.com/shtukaresearch/swarm-volume-registry): source, deployment records, and further design documentation.
+- [`contracts/src/interfaces/`](../contracts/src/interfaces/): the Solidity interfaces.
+- [`contracts/deployments/`](../contracts/deployments/): deployment records.
+- [Swarm documentation](https://docs.ethswarm.org): Bee, uploads, postage batches.
+- [`ethersphere/storage-incentives`](https://github.com/ethersphere/storage-incentives): `PostageStamp` and `PriceOracle` source.
+- [Safe documentation](https://docs.safe.global): Protocol Kit, API Kit, Transaction Service.
