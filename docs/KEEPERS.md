@@ -8,7 +8,7 @@ Users should run their own keeper, or arrange for one they trust. Any keeper ope
 
 A keeper needs:
 
-- The chain ID and `VolumeRegistry` address: `11155111` and `0xe491308994af391a32191a8c380ca818dad332a4` for `v2-rc4` ([Usage §2](./usage.md#2-deployment)).
+- The chain ID and `VolumeRegistry` address: `11155111` and `0xe491308994af391a32191a8c380ca818dad332a4` for `v2-rc4` ([Usage §2](./usage.md#2-contract-addresses)).
 - The volume IDs it is responsible for, or a policy for choosing them from the active set.
 - At least one RPC endpoint, preferably several from independent providers.
 - A transaction-signing wallet funded with the chain's native gas token.
@@ -26,7 +26,14 @@ The keeper surface is declared in two Solidity interfaces at tag `v2-rc4`, in [`
 - `IVolumeRegistryKeeper`: `trigger(bytes32)`, `trigger(bytes32[])`, `reap(bytes32)`.
 - `IVolumeRegistryViews`: enumeration (`getActiveVolumes`, `getActiveVolumeCount`, `getVolume`), the events, and the `SkipReason`, `RetireReason` and `Status` enums.
 
-A keeper needs nothing else. Build its ABI from these two interfaces (`forge inspect IVolumeRegistryKeeper abi --json`, and the same for `IVolumeRegistryViews`), or take the full ABI from the deployment record ([Usage §3](./usage.md#3-abi-and-solidity-interfaces)). A keeper whose ABI holds only these functions cannot call owner or payer functions by mistake.
+A keeper needs nothing else. Take the full ABI from the deployment record ([Usage §2](./usage.md#abi-and-solidity-interfaces)), or build a narrower one from these two interfaces. A keeper whose ABI holds only these functions cannot call owner or payer functions by mistake:
+
+```sh
+git clone --branch v2-rc4 --recurse-submodules https://github.com/shtukaresearch/swarm-volume-registry
+cd swarm-volume-registry/contracts
+forge inspect IVolumeRegistryKeeper abi --json > keeper.abi.json
+forge inspect IVolumeRegistryViews  abi --json > views.abi.json
+```
 
 ## Revert semantics
 
@@ -88,7 +95,7 @@ Treat an out-of-gas revert as a keeper failure.
 
 Run the keeper substantially more often than the runway that `graceBlocks` represents. On `v2-rc4`, `graceBlocks` is 300, about one hour; the reference keeper runs every ten minutes.
 
-Do not treat `graceBlocks × expected block time` as a precise deadline. Block production, transaction inclusion, gas prices, RPC availability and the postage price all vary. Leave enough margin for several missed runs and delayed transactions. The worst-case survival bound is in [Usage §18](./usage.md#18-survival-guarantee).
+Do not treat `graceBlocks × expected block time` as a precise deadline. Block production, transaction inclusion, gas prices, RPC availability and the postage price all vary. Leave enough margin for several missed runs and delayed transactions. The worst-case survival bound is in [Usage §15](./usage.md#15-survival-guarantee).
 
 Prevent overlapping runs that share a wallet, unless the implementation deliberately manages nonces across concurrent runs. Triggering is idempotent, so a skipped run costs nothing that the next one does not recover, as long as the runway holds.
 
@@ -184,7 +191,7 @@ Monitoring should answer "did the latest scheduled run maintain its volumes?", n
 
 ## Testing
 
-Test a keeper against the Sepolia `VolumeRegistry` before relying on it. Sepolia ETH and sBZZ sources are in [Usage §20](./usage.md#20-testnet-tokens); sBZZ has no faucet.
+Test a keeper against the Sepolia `VolumeRegistry` before relying on it. Sepolia ETH and sBZZ sources are in [Usage §17](./usage.md#17-testnet-tokens); sBZZ has no faucet.
 
 A local fork exercises every path without spending testnet tokens:
 
@@ -195,7 +202,7 @@ cast rpc anvil_impersonateAccount $HOLDER
 cast send $BZZ "transfer(address,uint256)" $TEST_ACCOUNT $AMOUNT --from $HOLDER --unlocked
 ```
 
-Then create a volume ([Usage §7](./usage.md#7-creating-a-volume)) and point the keeper at the fork. `cast rpc anvil_mine <n>` advances blocks so the batch drains. Use a separate keystore account for the fork, because the prefunded anvil keys are public.
+Then create a volume ([Usage quickstart](./usage.md#1-quickstart)) and point the keeper at the fork. `cast rpc anvil_mine <n>` advances blocks so the batch drains. Use a separate keystore account for the fork, because the prefunded anvil keys are public.
 
 Without any sBZZ you can still test:
 
