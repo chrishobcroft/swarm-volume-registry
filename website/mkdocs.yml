@@ -1,0 +1,85 @@
+# Docs website, published at https://volumes.md/ (custom domain set in the
+# repository's Settings → Pages). Build from the repository root:
+#
+#   pip install -r website/requirements.txt
+#   mkdocs serve -f website/mkdocs.yml      # http://127.0.0.1:8000
+#   mkdocs build --strict -f website/mkdocs.yml
+#
+# The pages are the Markdown files in docs/, which stay readable on GitHub.
+# website/hooks.py adapts them for the site and also publishes each page's
+# Markdown source next to its HTML, plus llms.txt and llms-full.txt for agents.
+
+site_name: Swarm Volume Registry
+site_description: >-
+  Integration reference for VolumeRegistry, a contract that keeps Swarm postage
+  batches alive with a payer-funded, permissionless keeper API.
+site_url: https://volumes.md/
+repo_url: https://github.com/shtukaresearch/swarm-volume-registry
+repo_name: shtukaresearch/swarm-volume-registry
+edit_uri: blob/main/docs/
+
+docs_dir: ../docs
+site_dir: site
+
+# Only the integration pages are published. The design doc and decision records
+# are contributor material; links to them from published pages point at GitHub.
+exclude_docs: |
+  TEST-STRATEGY.md
+  DESIGN.md
+  adr/
+  *.excalidraw
+
+nav:
+  - Home: index.md
+  - Usage: usage.md
+  - Running a keeper: KEEPERS.md
+
+hooks:
+  - hooks.py
+
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
+
+theme:
+  name: material
+  features:
+    - content.code.copy
+    - content.tabs.link
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - search.highlight
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: blue grey
+      accent: deep orange
+      toggle:
+        icon: material/weather-night
+        name: Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: blue grey
+      accent: deep orange
+      toggle:
+        icon: material/weather-sunny
+        name: Light mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
