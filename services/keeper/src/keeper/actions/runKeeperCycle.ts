@@ -12,7 +12,6 @@ import {
   getBlockNumber,
   getTransactionCount,
   multicall,
-  simulateContract,
   waitForTransactionReceipt,
 } from "viem/actions";
 import { getAction } from "viem/utils";
@@ -27,7 +26,7 @@ import type {
   VolumeView,
 } from "../types.js";
 import { collectActiveVolumes } from "./collectActiveVolumes.js";
-import { BATCH_SIZE, TRIGGER_GAS, trigger } from "./trigger.js";
+import { BATCH_SIZE, estimateTriggerGas, trigger } from "./trigger.js";
 
 export type RunKeeperCycleParameters = {
   registry: Address;
@@ -39,8 +38,6 @@ export type RunKeeperCycleParameters = {
   maxVolumesPerCycle?: number;
   /** Volumes per transaction. Default {@link BATCH_SIZE}. */
   batchSize?: number;
-  /** Each transaction's gas limit. Default {@link TRIGGER_GAS} — see {@link trigger}. */
-  gas?: bigint;
   /** Default 1. */
   confirmations?: number;
   /** Per-transaction receipt wait, in ms. Default 60_000. */
@@ -72,7 +69,7 @@ export type RunKeeperCycleReturnType = {
   noop: Hex[];
   /**
    * Volumes whose transaction reverted, was never mined, or never confirmed,
-   * and volumes held back because they revert `trigger` in simulation.
+   * and volumes in a batch whose gas estimate reverts.
    */
   failed: Hex[];
   /** `selected` mode: requested ids that are not Active volumes. */
@@ -123,18 +120,13 @@ export function rotateVolumes<T>(ids: readonly T[], blockNumber: bigint): T[] {
  *
  * **Batched**, through `trigger(bytes32[])`: one transaction, nonce and receipt
  * wait per batch rather than per volume, so a cycle reaches several times as
- * many volumes in the same time. Every batch carries the same fixed gas
- * limit; {@link trigger} explains why.
+ * many volumes in the same time.
  *
- * **Simulated before it is sent.** The batch reverts as a whole when any of its
- * volumes does, and per ADR-0007 that means out of gas, a paused PostageStamp
- * or a fault. So each batch is first run as an `eth_call` with its gas limit.
- * If that reverts, each volume is simulated alone with `trigger(bytes32)`, in
- * one multicall: the ones that revert are `failed` with their reason and not
- * sent, and the rest go out without them. When none reverts alone, the batch
- * only reverts together, and every volume in it is `failed` with the batch's
- * reason. Either way one volume's fault does not hold back the others for
- * good: each cycle rotates the list, so batches are made up differently.
+ * **Estimated before it is sent.** Each batch's gas limit comes from
+ * {@link estimateTriggerGas}, which is also its simulation. Per ADR-0007 the
+ * estimate reverts only on out of gas, a paused PostageStamp or a fault, and
+ * leaving a volume out fixes none of them. So a batch whose estimate reverts
+ * is not sent, and every volume in it is `failed` with the decoded reason.
  *
  * In a mined batch, every volume emits `Toppedup`, `TopupSkipped` or
  * `VolumeRetired`, or nothing when it needed nothing, which is a `noop`. A
@@ -339,89 +331,23 @@ export async function runKeeperCycle<
   }
 
   /**
-   * Trigger the head of `pending`, as many as one transaction takes, less any
-   * volume that would revert it.
+   * Trigger the head of `pending`, as many as one transaction takes, and read
+   * back each volume's outcome.
    */
   async function sendBatch(pending: VolumeView[]): Promise<VolumeResult[]> {
     const batch = pending.slice(0, batchSize);
-    const reverts = await simulate(batch);
-    const sendable = batch.filter((v) => !reverts.has(v.volumeId));
-    const sent = new Map(
-      (sendable.length > 0 ? await send(sendable) : []).map((r) => [r.volumeId, r]),
-    );
-    return batch.map(
-      (v) =>
-        sent.get(v.volumeId) ?? {
-          volumeId: v.volumeId,
-          status: "failed" as const,
-          error: reverts.get(v.volumeId)!,
-        },
-    );
-  }
+    const volumeIds = batch.map((v) => v.volumeId);
 
-  /**
-   * The volumes in `batch` that would revert it, each with its reason. Empty
-   * when the batch simulates cleanly, which is almost always: one `eth_call`.
-   * Otherwise each volume is simulated alone, in one multicall. Every volume
-   * is named when none reverts alone, or when the multicall itself fails.
-   */
-  async function simulate(batch: VolumeView[]): Promise<Map<Hex, string>> {
-    let batchReason: string;
+    let gas: bigint;
     try {
-      // `as never`: simulateContract derives its parameter type through the
-      // chain formatter, which viem cannot resolve against a generic client.
-      await getAction(
-        client,
-        simulateContract,
-        "simulateContract",
-      )({
-        address: registry,
-        abi: registryAbi,
-        functionName: "trigger",
-        args: [batch.map((v) => v.volumeId)],
-        account: client.account,
-        chain: client.chain,
-        gas: parameters.gas ?? TRIGGER_GAS,
-      } as never);
-      return new Map();
+      gas = await estimateTriggerGas(client, { registry, volumeIds });
     } catch (err) {
-      batchReason = revertReason(err as Error);
+      const error = `gas estimation failed: ${revertReason(err as Error)}`;
+      return volumeIds.map((volumeId) => ({ volumeId, status: "failed" as const, error }));
     }
 
-    const reverts = new Map<Hex, string>();
-    try {
-      const results = await getAction(
-        client,
-        multicall,
-        "multicall",
-      )({
-        allowFailure: true,
-        contracts: batch.map((v) => ({
-          address: registry,
-          abi: registryAbi,
-          functionName: "trigger" as const,
-          args: [v.volumeId] as const,
-        })),
-      });
-      results.forEach((outcome, i) => {
-        if (outcome.status === "failure") {
-          reverts.set(batch[i]!.volumeId, `reverts in simulation: ${revertReason(outcome.error)}`);
-        }
-      });
-      if (reverts.size > 0) return reverts;
-    } catch (err) {
-      batchReason += `; simulating its volumes one by one failed too: ${message(err)}`;
-    }
-    for (const v of batch) {
-      reverts.set(v.volumeId, `the batch reverts in simulation: ${batchReason}`);
-    }
-    return reverts;
-  }
-
-  /** Send `batch` as one transaction and read back each volume's outcome. */
-  async function send(batch: VolumeView[]): Promise<VolumeResult[]> {
     if (dryRun) {
-      return batch.map((v) => ({ volumeId: v.volumeId, status: "simulated" as const }));
+      return volumeIds.map((volumeId) => ({ volumeId, status: "simulated" as const }));
     }
 
     let hash: Hex | undefined;
@@ -429,8 +355,8 @@ export async function runKeeperCycle<
       sending ??= await readSending();
       hash = await trigger(client, {
         registry,
-        volumeIds: batch.map((v) => v.volumeId),
-        gas: parameters.gas,
+        volumeIds,
+        gas,
         nonce: sending.nonce,
         maxFeePerGas: sending.maxFeePerGas,
         maxPriorityFeePerGas: sending.maxPriorityFeePerGas,
@@ -510,7 +436,7 @@ const SKIP_WARNINGS: Record<string, string> = {
 };
 
 /**
- * A simulated call's revert, as its reason: the registry's error name, a
+ * A gas estimate's revert, as its reason: the registry's error name, a
  * `require` message such as PostageStamp's when paused, or the node's own
  * message when there is no revert data to decode, as with out of gas.
  */

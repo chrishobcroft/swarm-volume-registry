@@ -43,7 +43,7 @@ export interface VolumeResult {
    * - `success` / `reverted` — mined, per the receipt.
    * - `simulated` — dry run; nothing was sent.
    * - `failed` — never mined: the send failed, the receipt wait timed out,
-   *   or the volume was held back because `trigger` reverts in simulation.
+   *   or the batch was not sent because its gas estimate failed.
    */
   status: "success" | "reverted" | "simulated" | "failed";
   /** What the contract did. Present only when `status` is `success`. */

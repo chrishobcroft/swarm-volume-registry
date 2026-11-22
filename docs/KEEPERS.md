@@ -40,14 +40,15 @@ retired volume emits `TopupSkipped(NotActive)`.
 reverts. A successful batch has therefore processed every ID in it. Because one volume
 can revert the whole batch:
 
-- Simulate the batch with `eth_call` before sending it. If the simulation reverts,
-  simulate each volume alone to find the one responsible. Report it, and send the rest
-  without it.
-- Give every batch enough gas for all of its volumes to top up. A top-up's cost depends
-  on PostageStamp state, and running out of gas reverts the batch. Unused gas is not
-  charged.
-- Keep batches within the chain's per-transaction gas cap, where it has one (2^24 under
-  EIP-7825).
+- Estimate the batch's gas with `eth_estimateGas` before sending it. The estimate
+  reverts in the same cases as the transaction, so it is also the simulation. If it
+  reverts, report the batch as failed with the decoded reason and do not send it.
+  Leaving a volume out does not fix a paused PostageStamp, out of gas or a bug.
+- Send the batch with a generous multiple of the estimate. A top-up's cost depends on
+  PostageStamp state, which can change before inclusion, and running out of gas
+  reverts the batch. Unused gas is not charged.
+- Keep the gas limit within the chain's per-transaction gas cap, where it has one
+  (2^24 under EIP-7825).
 
 Releases up to v2-rc3 differ. Their `trigger(bytes32[])` runs each ID in a `try/catch`
 that also absorbs out-of-gas, so a successful receipt does not show that every ID was
@@ -166,7 +167,7 @@ Treat at least the following as failures:
 - Failure to sign or submit a transaction.
 - Insufficient gas funds.
 - A reverted transaction.
-- A volume whose `trigger` reverts in simulation.
+- A batch whose gas estimate reverts.
 - A transaction that does not receive a receipt within the configured timeout.
 
 Useful warnings include:

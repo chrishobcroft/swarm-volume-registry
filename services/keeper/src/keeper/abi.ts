@@ -1,16 +1,10 @@
 // The VolumeRegistry surface a keeper cycle touches, and nothing more.
 // Kept `as const` so viem can infer per-function argument and return types.
 //
-// Deliberately partial on the call side: enumeration, the two trigger
-// overloads, and the events that explain what a trigger did. The contract's
-// full error set is here regardless, because decoding a failure costs nothing
-// and is worth having when there is one.
-//
-// The keeper sends `trigger(bytes32[])`, which reverts as a whole when any of
-// its volumes does (ADR-0007). `trigger(bytes32)` is never sent:
-// `runKeeperCycle` only simulates it, one volume at a time, to find which
-// volume makes a batch revert and why. viem tells the overloads apart by their
-// arguments: an array of ids, or one id.
+// Deliberately partial on the call side: enumeration, the batched
+// `trigger(bytes32[])`, and the events that explain what a trigger did. The
+// contract's full error set is here regardless, because decoding a failure
+// costs nothing and is worth having when there is one.
 
 export const registryAbi = [
   {
@@ -78,13 +72,6 @@ export const registryAbi = [
     name: "trigger",
     stateMutability: "nonpayable",
     inputs: [{ type: "bytes32[]", name: "volumeIds" }],
-    outputs: [],
-  },
-  {
-    type: "function",
-    name: "trigger",
-    stateMutability: "nonpayable",
-    inputs: [{ type: "bytes32", name: "volumeId" }],
     outputs: [],
   },
   // Events decoded off the trigger receipt to explain per-volume outcomes.

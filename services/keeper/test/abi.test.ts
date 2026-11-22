@@ -10,7 +10,6 @@ const METHODS = {
   "getActiveVolumes(uint256,uint256)": "0x68abda20",
   "getVolume(bytes32)": "0x92650fb3",
   "trigger(bytes32[])": "0x5ef6eac9",
-  "trigger(bytes32)": "0x4c097cb4",
 } as const;
 
 const ID = `0x${"11".repeat(32)}` as const;
@@ -36,11 +35,6 @@ describe("registry call ABI", () => {
       functionName: "trigger",
       args: [[ID, ID]],
     }),
-    "trigger(bytes32)": encodeFunctionData({
-      abi: registryAbi,
-      functionName: "trigger",
-      args: [ID],
-    }),
   } as const;
 
   for (const [signature, selector] of Object.entries(METHODS)) {
@@ -49,15 +43,13 @@ describe("registry call ABI", () => {
     });
   }
 
-  // viem picks the overload by its arguments, so the two must stay distinct:
-  // the batch is sent, the single id only simulated.
-  test("carries exactly the two trigger overloads", () => {
+  // Only the batch is ever sent or estimated.
+  test("carries only the batched trigger", () => {
     const triggers = registryAbi.filter(
       (item) => item.type === "function" && item.name === "trigger",
     );
     expect(triggers.map((t) => t.inputs)).toEqual([
       [{ type: "bytes32[]", name: "volumeIds" }],
-      [{ type: "bytes32", name: "volumeId" }],
     ]);
   });
 });

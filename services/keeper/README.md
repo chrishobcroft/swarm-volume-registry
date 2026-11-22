@@ -1,6 +1,6 @@
 # keeper
 
-The Swarm `VolumeRegistry` keeper: one Cloudflare Worker per registry deployment. Each scheduled run enumerates the registry's active volumes, sends them through the batched `trigger(bytes32[])`, up to 8 to a transaction, and reports what the contract did to each. A batch reverts as a whole when any of its volumes does ([ADR-0007](../../docs/adr/0007-keeper-endpoints-revert-only-on-bugs.md)), so each one is simulated before it is sent, and a volume that reverts is reported and left out.
+The Swarm `VolumeRegistry` keeper: one Cloudflare Worker per registry deployment. Each scheduled run enumerates the registry's active volumes, sends them through the batched `trigger(bytes32[])`, up to 8 to a transaction, and reports what the contract did to each. A batch reverts as a whole when any of its volumes does ([ADR-0007](../../docs/adr/0007-keeper-endpoints-revert-only-on-bugs.md)), so each batch's gas is estimated before it is sent, and a batch whose estimate reverts is reported with the decoded reason and not sent.
 
 Cloudflare Cron Triggers are the only scheduler. GitHub Actions only tests the Worker; deploys are by hand with `wrangler`.
 
@@ -25,7 +25,7 @@ Each env in [`wrangler.jsonc`](./wrangler.jsonc) is one registry deployment, key
 
 Every run writes one JSON object to Workers Logs (`kind: "keeper/run"`) at the level matching its `status`:
 
-- **`failure`** (`console.error`) — invalid configuration, no usable RPC endpoint, the registry unreadable, or any volume whose transaction failed, reverted, or went unconfirmed within `RECEIPT_TIMEOUT_MS`, or that was left out of its batch because its `trigger` reverts in simulation. One failed volume does not stop the rest being attempted. The invocation itself then fails, so Cron Events shows it too.
+- **`failure`** (`console.error`) — invalid configuration, no usable RPC endpoint, the registry unreadable, or any volume whose transaction failed, reverted, or went unconfirmed within `RECEIPT_TIMEOUT_MS`, or whose batch was not sent because its gas estimate failed. One failed volume does not stop the rest being attempted. The invocation itself then fails, so Cron Events shows it too.
 - **`warning`** (`console.warn`) — a failover to a secondary RPC, the wallet below `MIN_BALANCE_WEI`, a `TopupSkipped` (`NoAuth`: payer revoked; `PaymentFailed`: out of BZZ or allowance; `NotActive`: retired before the batch reached it; `NotFound`: not a volume in this registry), a retirement, deferred work, or dry-run mode.
 - **`ok`** (`console.log`).
 
@@ -43,7 +43,7 @@ Secrets, per deployment — never shared between them:
 
 | | |
 |---|---|
-| `PRIVATE_KEY` | The keeper wallet, one per deployment, created and funded by `scripts/new_wallet.py`. It only pays gas: fund it with Sepolia ETH or xDAI and nothing else. Every batch is sent with a fixed 16M gas limit, of which it pays only for what it uses, but the node wants the whole limit covered at the fee cap (twice the base fee) up front. |
+| `PRIVATE_KEY` | The keeper wallet, one per deployment, created and funded by `scripts/new_wallet.py`. It only pays gas: fund it with Sepolia ETH or xDAI and nothing else. Every batch is sent with twice its gas estimate plus 1M per volume, capped at 2^24. It pays only for the gas it uses, but the node wants the whole limit covered at the fee cap (twice the base fee) up front. |
 | `RPC_URL` | Comma-separated, from independent providers. Probed every run — chain id included — and tried in order. |
 | `TELEGRAM_BOT_TOKEN` | From @BotFather. |
 | `TELEGRAM_CHAT_ID` | Numeric user or private-group chat ID. Deployments may post to the same group, but store it independently. |
@@ -54,7 +54,7 @@ Variables, in `wrangler.jsonc` per env: `DEPLOYMENT_NAME`, `CHAIN_ID`, `REGISTRY
 
 **A run must fit inside its cron interval**, so two runs never share the wallet at once: 5 s of RPC probing, plus `CYCLE_TIMEOUT_MS` (no new transaction starts after it), plus `RECEIPT_TIMEOUT_MS` for the last one, plus 5 s of slack. `test/config.test.ts` holds each env to that, and to the 15-minute Cron Trigger limit. On Sepolia that is up to 7 minutes of new transactions, roughly 35 at 12 s blocks, and up to 2 minutes for each receipt. Transactions are sent one at a time, each with up to 8 volumes, so a run reaches roughly `8 × CYCLE_TIMEOUT_MS / block time` volumes, capped at 30 by `MAX_VOLUMES_PER_CYCLE`. The rest are deferred, with a warning, and each run starts at a different point in the list so the same volumes are not deferred every time. If the active set outgrows that, raise the budget.
 
-Every RPC request counts against the platform's per-invocation subrequest cap: 50 on Workers Free, 10,000 on Workers Paid. A run spends about 20 on fixed work (probing each endpoint twice, enumeration, nonce and fees once per cycle, the balance check, the alert), then several per transaction: its send, the receipt wait, and one multicall that checks the volumes its receipt has no event for. On Workers Free, when each volume took its own transaction, runs reached about 3 volumes, whatever `CYCLE_TIMEOUT_MS` allowed.
+Every RPC request counts against the platform's per-invocation subrequest cap: 50 on Workers Free, 10,000 on Workers Paid. A run spends about 20 on fixed work (probing each endpoint twice, enumeration, nonce and fees once per cycle, the balance check, the alert), then several per transaction: its gas estimate, its send, and the receipt wait. On Workers Free, when each volume took its own transaction, runs reached about 3 volumes, whatever `CYCLE_TIMEOUT_MS` allowed.
 
 ## Setting up a deployment
 
@@ -144,4 +144,4 @@ pnpm dev --var DRY_RUN:true          # wrangler dev --env sepolia-v2-rc4
 curl "localhost:8787/cdn-cgi/local/scheduled?format=json"
 ```
 
-`DRY_RUN` simulates each trigger and sends nothing — the safe way to check a new deployment's RPC and registry. Only `secrets.required` names are read from `.dev.vars`; override anything else with `--var NAME:value`.
+`DRY_RUN` estimates each batch and sends nothing — the safe way to check a new deployment's RPC and registry. Only `secrets.required` names are read from `.dev.vars`; override anything else with `--var NAME:value`.

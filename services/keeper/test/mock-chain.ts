@@ -11,9 +11,9 @@
  * enough to emit the event the real contract would: retire edges first, then
  * auth, then the deficit — and *no* event when the volume needs nothing. An id
  * that is unknown or no longer Active answers `TopupSkipped(NotFound|NotActive)`.
- * As in ADR-0007, the batched overload reverts as a whole when any of its
- * volumes does: one with a `revert` reason reverts with it, alone or in a batch,
- * and a `starve`d one makes only the batch run out of gas.
+ * As in ADR-0007, the batch reverts as a whole when any of its volumes does:
+ * one with a `revert` reason reverts it with that reason, and a `starve`d one
+ * takes it past the transaction gas cap, so it cannot be estimated.
  */
 import {
   createWalletClient,
@@ -92,6 +92,17 @@ class Revert extends RpcRequestError {
   }
 }
 
+/** What geth answers when no gas limit up to the cap lets the call succeed. */
+class GasCapExceeded extends RpcRequestError {
+  constructor() {
+    super({
+      body: {},
+      url: "mock",
+      error: { code: -32000, message: "gas required exceeds allowance (16777216)" },
+    });
+  }
+}
+
 const MULTICALL3 = sepolia.contracts.multicall3.address;
 export const REGISTRY = "0x1111111111111111111111111111111111111111" as const;
 export const POSTAGE = "0x2222222222222222222222222222222222222222" as const;
@@ -113,6 +124,9 @@ const RETIRE = {
 /** TopupSkipped reason codes. */
 const SKIP = { noAuth: 1, paymentFailed: 2, notFound: 3, notActive: 4 } as const;
 
+/** What the mock's `eth_estimateGas` charges a batch: a base, plus each volume. */
+export const MOCK_GAS = { base: 50_000n, topUp: 1_000_000n, other: 30_000n } as const;
+
 export interface MockVolume {
   volumeId: Hex;
   /** Default: the volume id. */
@@ -128,8 +142,8 @@ export interface MockVolume {
   /** Model a payer whose `transferFrom` fails: BZZ balance or allowance gone. */
   payerBroke?: boolean;
   /**
-   * Model a volume whose top-up does not fit the batch's gas: the batch runs
-   * out of gas, with no revert data, while the volume alone simulates cleanly.
+   * Model a volume whose top-up takes its batch past the transaction gas cap:
+   * the node answers the estimate with an error and no revert data.
    */
   starve?: boolean;
   /** Model `_triggerOne` reverting with this `require` reason, e.g. Postage paused. */
@@ -202,7 +216,7 @@ export function mockChain(options: MockChainOptions = {}) {
   const batches: Hex[][] = [];
   const sentGas: bigint[] = [];
   const sentNonces: number[] = [];
-  let simulations = 0;
+  let estimates = 0;
   const calls: string[] = [];
   const receipts = new Map<Hex, { volumeIds: readonly Hex[] }>();
   let multicallCount = 0;
@@ -290,33 +304,39 @@ export function mockChain(options: MockChainOptions = {}) {
             };
         return encodeFunctionResult({ abi: registryAbi, functionName, result: view });
       }
-      case "trigger": {
-        const [arg] = args as readonly [Hex | readonly Hex[]];
-        const batch = Array.isArray(arg);
-        const ids = (batch ? arg : [arg]) as readonly Hex[];
-        if (batch) simulations += 1;
-        const reason = revertFor(ids, batch);
-        if (reason !== undefined) throw new Revert(reason);
-        return "0x";
-      }
       default:
         throw new Error(`mock registry: unhandled ${functionName}`);
     }
   }
 
-  /**
-   * The revert data `trigger` would end with for these ids, or undefined when
-   * it succeeds. Running out of gas only happens to a whole batch.
-   */
-  function revertFor(ids: readonly Hex[], batch: boolean): Hex | undefined {
+  /** The revert data `trigger` would end with for these ids, or undefined when it succeeds. */
+  function revertFor(ids: readonly Hex[]): Hex | undefined {
     for (const id of ids) {
       const v = find(id);
       if (v?.revert && isActive(v)) {
         return encodeErrorResult({ abi: solidityError, errorName: "Error", args: [v.revert] });
       }
     }
-    if (batch && ids.some((id) => find(id)?.starve)) return "0x";
     return undefined;
+  }
+
+  /** `eth_estimateGas` for `trigger(bytes32[])`, which is the only thing estimated. */
+  function estimateGas(tx: { to: Address; data: Hex }): Hex {
+    if (tx.to.toLowerCase() !== REGISTRY.toLowerCase()) {
+      throw new Error(`mock chain: no estimate for ${tx.to}`);
+    }
+    const { functionName, args } = decodeFunctionData({ abi: registryAbi, data: tx.data });
+    if (functionName !== "trigger") throw new Error(`mock registry: no estimate for ${functionName}`);
+    estimates += 1;
+    const ids = (args as readonly [readonly Hex[]])[0];
+    const reason = revertFor(ids);
+    if (reason !== undefined) throw new Revert(reason);
+    if (ids.some((id) => find(id)?.starve)) throw new GasCapExceeded();
+    const gas = ids.reduce<bigint>(
+      (sum, id) => sum + (outcomeFor(id)?.event === "Toppedup" ? MOCK_GAS.topUp : MOCK_GAS.other),
+      MOCK_GAS.base,
+    );
+    return numberToHex(gas);
   }
 
   function callPostage(data: Hex): Hex {
@@ -443,6 +463,8 @@ export function mockChain(options: MockChainOptions = {}) {
         };
       case "eth_call":
         return handleCall(args[0] as { to: Address; data: Hex });
+      case "eth_estimateGas":
+        return estimateGas(args[0] as { to: Address; data: Hex });
       case "eth_getBalance":
         return numberToHex(options.balance ?? 10n ** 18n);
       case "eth_getTransactionCount":
@@ -474,7 +496,7 @@ export function mockChain(options: MockChainOptions = {}) {
         const hash = args[0] as Hex;
         const sent = receipts.get(hash);
         if (!sent || options.dropReceipts) return null;
-        const reverted = options.revertTx || revertFor(sent.volumeIds, true) !== undefined;
+        const reverted = options.revertTx || revertFor(sent.volumeIds) !== undefined;
         return {
           transactionHash: hash,
           transactionIndex: "0x0",
@@ -523,9 +545,9 @@ export function mockChain(options: MockChainOptions = {}) {
     get multicallCount() {
       return multicallCount;
     },
-    /** How many times `trigger(bytes32[])` was simulated with eth_call. */
-    get simulations() {
-      return simulations;
+    /** How many times `trigger(bytes32[])` was estimated with eth_estimateGas. */
+    get estimates() {
+      return estimates;
     },
     /** How many PostageStamp reads were made. */
     get postageReads() {
