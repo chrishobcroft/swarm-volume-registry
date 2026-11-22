@@ -79,7 +79,13 @@
       "secrets": {
         "required": ["PRIVATE_KEY", "RPC_URL", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"]
       },
-      "triggers": { "crons": ["*/10 * * * *"] }
+      "triggers": { "crons": ["*/10 * * * *"] },
+      // This Worker once ran #48's PreferenceStore Durable Object; v2 deletes
+      // it and its stored preferences. No other env ever had it.
+      "migrations": [
+        { "tag": "v1", "new_sqlite_classes": ["PreferenceStore"] },
+        { "tag": "v2", "deleted_classes": ["PreferenceStore"] }
+      ]
     }
   }
 }
