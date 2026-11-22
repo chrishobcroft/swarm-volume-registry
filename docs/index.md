@@ -11,7 +11,6 @@
 
 - **[Usage](./usage.md)**: the integration reference. Deployment addresses, ABI and Solidity interfaces, setup walkthroughs with `cast`, web3.py, viem and ethers, the full API, events, errors and revert semantics, costs, and uploading with Bee.
 - **[Running a keeper](./KEEPERS.md)**: operating a job that calls `trigger` on a schedule: revert semantics, gas limits, scheduling, RPC reliability and monitoring.
-- **[Design](./DESIGN.md)** and the **[decision records](./adr/README.md)**: the authoritative architecture, invariants, threat model, and the reasons behind them.
 
 ## For agents
 

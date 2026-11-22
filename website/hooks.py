@@ -211,7 +211,9 @@ def on_post_build(config):
         if summary and not summary.startswith("Status:"):
             entry += f": {summary}"
         (lines if src in FULL_PAGES else design).append(entry)
-    lines += ["", "## Design and rationale", "", *design, ""]
+    if design:
+        lines += ["", "## Design and rationale", "", *design]
+    lines += [""]
     lines += [
         "## Optional",
         "",

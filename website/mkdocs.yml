@@ -21,25 +21,18 @@ edit_uri: blob/main/docs/
 docs_dir: ../docs
 site_dir: site
 
+# Only the integration pages are published. The design doc and decision records
+# are contributor material; links to them from published pages point at GitHub.
 exclude_docs: |
   TEST-STRATEGY.md
+  DESIGN.md
+  adr/
   *.excalidraw
 
 nav:
   - Home: index.md
   - Usage: usage.md
   - Running a keeper: KEEPERS.md
-  - Design:
-      - Architecture: DESIGN.md
-      - Decision records:
-          - adr/README.md
-          - adr/0001-permissionless-batch-import.md
-          - adr/0002-volume-ids-from-owner-nonce.md
-          - adr/0003-nonce-in-account.md
-          - adr/0004-register-and-import-entry-points.md
-          - adr/0005-codes-as-enums.md
-          - adr/0006-immutable-deployment-records.md
-          - adr/0007-keeper-endpoints-revert-only-on-bugs.md
 
 hooks:
   - hooks.py
