@@ -118,8 +118,14 @@ contract ForkRegistryTest is Test {
             uint256(stamp.minimumValidityBlocks()),
             "FORK_GRACE_BLOCKS below chain's minimumValidityBlocks"
         );
-        address oracle = stamp.priceOracle();
-        assertTrue(oracle != address(0), "PriceOracle not discoverable");
+        // Gnosis's PostageStamp has no priceOracle() getter, and the
+        // registry never calls it, so a missing getter is logged, not fatal.
+        // A getter that exists must still resolve to a non-zero address.
+        try stamp.priceOracle() returns (address oracle) {
+            assertTrue(oracle != address(0), "PriceOracle not discoverable");
+        } catch {
+            emit log("PostageStamp has no priceOracle() getter; skipping oracle parity");
+        }
 
         _assertBatchesLayoutParity();
 
