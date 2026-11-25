@@ -32,7 +32,6 @@ Parity assertions in `setUp`, run before every test:
 
 - code is present at `FORK_POSTAGE_STAMP` and `FORK_MULTICALL3`;
 - `FORK_GRACE_BLOCKS ≥ PostageStamp.minimumValidityBlocks()`;
-- `PostageStamp.priceOracle()`, where the getter exists, resolves to a non-zero address. The Gnosis PostageStamp has no such getter, and the registry never calls it, so there the check is logged and skipped;
 - the live `batches()` return tuple matches `IPostageStampLike` (DESIGN §14): a batch with known fields is created on the fork and its six return words decode to exactly those fields. Registration records `owner` and `depth` from batches the registry did not create, so a layout mismatch would corrupt every registered record.
 
 Gnosis:
