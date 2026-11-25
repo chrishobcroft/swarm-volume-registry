@@ -93,8 +93,9 @@ python3 -m unittest discover -s scripts/tests
 ```
 
 None of this needs chain access or Cloudflare credentials. CI runs the same
-steps (`.github/workflows/keeper-ci.yml`); deploys are by hand with `wrangler`
-([`RELEASING.md`](./RELEASING.md) Part C for a new deployment). Setup,
+steps (`.github/workflows/keeper-ci.yml`), and a merge to `main` deploys the keeper
+(`.github/workflows/keeper-deploy.yml`; [`RELEASING.md`](./RELEASING.md) Part C for a
+new deployment). Setup,
 configuration and local runs are in its [README](./services/keeper/README.md).
 
 ## Indexer

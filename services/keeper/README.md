@@ -2,7 +2,7 @@
 
 The Swarm `VolumeRegistry` keeper: one Cloudflare Worker per registry deployment. Each scheduled run enumerates the registry's active volumes, sends them through the batched `trigger(bytes32[])`, up to 8 to a transaction, and reports what the contract did to each. A batch reverts as a whole when any of its volumes does ([ADR-0007](../../docs/adr/0007-keeper-endpoints-revert-only-on-bugs.md)), so each batch's gas is estimated before it is sent, and a batch whose estimate reverts is reported with the decoded reason and not sent.
 
-Cloudflare Cron Triggers are the only scheduler. GitHub Actions only tests the Worker; deploys are by hand with `wrangler`.
+Cloudflare Cron Triggers are the only scheduler. GitHub Actions tests the Worker on every PR, and `keeper-deploy.yml` deploys every env in `wrangler.jsonc` when a keeper change merges to `main`.
 
 | Env | Worker | Chain | Registry | Schedule |
 |---|---|---|---|---|
@@ -62,7 +62,7 @@ Needs Workers Paid: a run signs and sends transactions, which the Free plan's 10
 
 ### Initial worker deployment
 
-A new deployment's Worker is set up by [`RELEASING.md`](../../RELEASING.md) Part C: `scripts/new_wallet.py` creates and funds its wallet, and the first `wrangler deploy` carries the secrets in a file, because a Worker cannot take `wrangler secret put` before it exists. `GET /health` then returns the wallet address the Worker signs with (and `503` with every validation problem if the configuration is invalid, without making RPC calls).
+A new deployment's Worker is set up by [`RELEASING.md`](../../RELEASING.md) Part C: `scripts/new_wallet.py` creates and funds its wallet, `wrangler secret bulk` stores its secrets before the env merges, and the merge deploys it. `GET /health` then returns the wallet address the Worker signs with (and `503` with every validation problem if the configuration is invalid, without making RPC calls).
 
 ### Worker code update
 
@@ -79,11 +79,7 @@ A new deployment's Worker is set up by [`RELEASING.md`](../../RELEASING.md) Part
    If you changed `wrangler.jsonc`, run `pnpm types` and commit the regenerated `worker-configuration.d.ts` (CI fails if stale).
 
 3. Push to a branch — `keeper-ci.yml` runs the same checks. It never runs a keeper cycle or deploys.
-4. Merge to `main`, then deploy by hand from it:
-
-   ```bash
-   pnpm exec wrangler deploy --env sepolia-v2-rc4
-   ```
+4. Merge to `main`. `keeper-deploy.yml` reruns the checks and deploys every env. To redeploy without a change, run it by hand from `main` (`gh workflow run keeper-deploy.yml`).
 
 ### Retiring a Worker
 
@@ -108,7 +104,7 @@ pnpm exec wrangler secret put TELEGRAM_CHAT_ID --env sepolia-v2-rc4
 
 # or atomically via file (avoids typing a key into shell history)
 printf 'PRIVATE_KEY=0x…\nRPC_URL=https://…,https://…\nTELEGRAM_BOT_TOKEN=…\nTELEGRAM_CHAT_ID=-100…\n' > .secrets.sepolia-v2-rc4
-pnpm exec wrangler deploy --env sepolia-v2-rc4 --secrets-file .secrets.sepolia-v2-rc4
+pnpm exec wrangler secret bulk .secrets.sepolia-v2-rc4 --env sepolia-v2-rc4
 rm .secrets.sepolia-v2-rc4
 ```
 

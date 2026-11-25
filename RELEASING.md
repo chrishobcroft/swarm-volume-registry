@@ -304,6 +304,13 @@ running whatever it was last deployed with until it is deleted out of band
 (`pnpm exec wrangler delete --name <worker>`). This is how the keeper service the maintainers
 run is operated, not a rule for anyone else running a keeper.
 
+`.github/workflows/keeper-deploy.yml` deploys every env in `wrangler.jsonc` on each merge
+to `main` that touches the keeper, after `keeper-ci` passes; it can also be run by hand
+from `main`. It uploads code and vars only. Secrets are set in Cloudflare by hand, once
+per Worker, and a deploy fails while any of them is missing. A new release's keeper
+therefore gets its wallet and secrets (C2, C3) before the PR that adds its env (C1)
+merges (C4).
+
 Run commands in this part from `services/keeper/`. The deployment label is the network
 and release name (`sepolia-v2-rc3`).
 
@@ -316,7 +323,9 @@ In `wrangler.jsonc`, replace the env with one keyed by the new label:
 
 Add the outgoing Worker, its release and the commit it was last deployed from to the list
 of retired Workers at the top of the file: that commit is where to redeploy it from, if it
-ever has to be.
+ever has to be. Each Worker version's message is the commit it was deployed from
+(`pnpm exec wrangler deployments list --name <worker>`). In `package.json`, point `dev` and
+`check:deploy` at the new env.
 
 Then bring the keeper's code up to the release. Diff the contract against the previous
 release tag (`git diff <previous-tag> <tag> -- contracts/src`), and change whatever the
@@ -332,7 +341,7 @@ pnpm typecheck
 pnpm check:deploy
 ```
 
-Commit, PR to `main` and merge before deploying, so the commit that deploys is on `main`.
+Commit and open a PR to `main`. Do not merge it until C3 is done.
 
 ### C2. Create and fund the wallet
 
@@ -349,10 +358,10 @@ no deployment record, an RPC on another chain, and an account that already exist
 `--existing` it instead requires the account and only funds it: rerun that way when a run
 created the wallet but failed to fund it, or to top the wallet up.
 
-### C3. First deploy
+### C3. Set the secrets
 
-A Worker cannot take `wrangler secret put` before it exists, so the first deploy carries
-its secrets in a file, which `.gitignore` covers. The key comes straight from the keystore:
+From the C1 branch, so that `--env` names the new Worker. The key comes straight from the
+keystore:
 
 ```sh
 umask 077
@@ -360,11 +369,18 @@ umask 077
   printf 'PRIVATE_KEY=%s\n' "$(cast wallet private-key --account keeper-cloudflare-sepolia-v2-rc3)"
   printf 'RPC_URL=https://…,https://…\nTELEGRAM_BOT_TOKEN=…\nTELEGRAM_CHAT_ID=-100…\n'
 } > .secrets.sepolia-v2-rc3
-pnpm exec wrangler deploy --env sepolia-v2-rc3 --secrets-file .secrets.sepolia-v2-rc3
+pnpm exec wrangler secret bulk .secrets.sepolia-v2-rc3 --env sepolia-v2-rc3
 rm .secrets.sepolia-v2-rc3
 ```
 
-### C4. Check the first run
+The Worker does not exist yet, so `wrangler` creates a placeholder under its name, with no
+code and no cron trigger, to hold the secrets.
+
+### C4. Merge
+
+Merge the C1 PR. `keeper-deploy` replaces the placeholder with the keeper.
+
+### C5. Check the first run
 
 `GET /health` returns the wallet address, which must be the one C2 created:
 

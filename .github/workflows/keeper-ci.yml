@@ -2,9 +2,8 @@
 # with `wrangler deploy --dry-run`; tests the wallet script.
 #
 # It never runs a keeper cycle: Cloudflare Cron Triggers are the only
-# scheduler, and deploys are by hand (RELEASING.md Part C). Nothing here needs
-# Cloudflare credentials either — a dry run bundles locally — so it runs the
-# same on pull requests from forks.
+# scheduler. Nothing here needs Cloudflare credentials either — a dry run
+# bundles locally — so it runs the same on pull requests from forks.
 
 name: keeper-ci
 
@@ -14,6 +13,8 @@ on:
   pull_request:
   push:
     branches: [main]
+  # keeper-deploy.yml runs this as its gate, so nothing deploys untested.
+  workflow_call:
 
 jobs:
   check:
