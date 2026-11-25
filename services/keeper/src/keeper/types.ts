@@ -19,15 +19,13 @@ export type KeeperMode =
   | { type: "selected"; volumeIds: readonly Hex[] };
 
 /**
- * What the contract did to a volume, decoded from that volume's own receipt.
- * Discriminated on `outcome`, so `amount` and `reason` are present exactly
- * where they apply.
+ * What the contract did to a volume, decoded from its event in the batch
+ * receipt. Discriminated on `outcome`, so `amount` and `reason` are present
+ * exactly where they apply.
  *
  * `noop` is a real answer, not an absence of one: step 6 of `_triggerOne`
  * returns silently when the batch already holds at least `graceBlocks` of
- * runway. That is the healthy steady state, and one volume per transaction is
- * what makes it legible — a batched receipt could not tell it apart from a
- * volume whose inner call ran out of gas.
+ * runway, and that is the only branch without an event.
  */
 export type VolumeSummary =
   | { outcome: "toppedUp"; amount: bigint }
@@ -44,10 +42,12 @@ export interface VolumeResult {
    *
    * - `success` / `reverted` — mined, per the receipt.
    * - `simulated` — dry run; nothing was sent.
-   * - `failed` — never mined: estimation reverted, the send failed, or the
-   *   receipt wait timed out.
+   * - `pending` — sent, but the receipt wait timed out. It may still mine; the
+   *   next cycle re-reads the chain either way, so this is a warning.
+   * - `failed` — never mined: the send failed, or the batch was not sent
+   *   because its gas estimate failed.
    */
-  status: "success" | "reverted" | "simulated" | "failed";
+  status: "success" | "reverted" | "simulated" | "pending" | "failed";
   /** What the contract did. Present only when `status` is `success`. */
   outcome?: VolumeOutcomeKind;
   /** BZZ pulled from the payer, when `outcome` is `toppedUp`. */
@@ -56,6 +56,7 @@ export interface VolumeResult {
   reason?: string;
   hash?: Hex;
   blockNumber?: bigint;
+  /** The whole batch transaction's, shared by every volume in it. */
   gasUsed?: bigint;
   error?: string;
 }

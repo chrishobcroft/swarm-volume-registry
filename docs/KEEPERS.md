@@ -60,8 +60,10 @@ So a successful receipt means every requested volume was processed, and a revert
 
 Either entry point is fine on `v2-rc4`:
 
-- **`trigger(bytes32)`, one transaction per volume.** A revert affects only that volume, and each volume has its own transaction hash. This is the default choice, and what the [reference keeper](#reference-implementation) does.
-- **`trigger(bytes32[])`, one transaction for several volumes.** It saves the 21k transaction base cost and nonce handling for all but one volume. It is all-or-nothing: an out-of-gas or a fault on any volume rolls back the whole batch, and no volume in it is topped up. Keep batches small enough that one failure does not hold up many volumes.
+- **`trigger(bytes32)`, one transaction per volume.** A revert affects only that volume, and each volume has its own transaction hash.
+- **`trigger(bytes32[])`, one transaction for several volumes.** It saves the 21k transaction base cost and nonce handling for all but one volume. It is all-or-nothing: an out-of-gas or a fault on any volume rolls back the whole batch, and no volume in it is topped up. Keep batches small enough that one failure does not hold up many volumes. This is what the [reference keeper](#reference-implementation) does.
+
+The batch's `eth_estimateGas` reverts in the same cases as the transaction, so it is also the batch's simulation. If it reverts, report the batch as failed with the decoded reason and do not send it. Leaving a volume out does not fix a paused Postage, an out-of-gas or a fault.
 
 The batched entry point's old problems are gone: `eth_estimateGas` now measures the real work, and a failed transfer for one volume cannot silently use up the rest of the batch's gas.
 
@@ -172,11 +174,11 @@ Treat at least the following as failures:
 - no RPC endpoint reachable;
 - failure to sign or send a transaction;
 - insufficient gas funds;
-- a reverted transaction (see [Revert semantics](#revert-semantics));
-- a transaction with no receipt within the configured timeout.
+- a reverted transaction (see [Revert semantics](#revert-semantics)), or a batch whose gas estimate reverts.
 
 Useful warnings:
 
+- a transaction with no receipt within the configured timeout: it may still mine, and the next run re-reads the chain either way;
 - keeper wallet balance below its threshold;
 - base fee far above its expected range;
 - primary RPC failure or frequent failover;
@@ -222,4 +224,4 @@ A full end-to-end test needs a volume funded with sBZZ. With one, also check:
 
 ## Reference implementation
 
-[`services/keeper/`](../services/keeper/README.md) is the keeper the maintainers run: a Cloudflare Worker, written in TypeScript with viem, that sends one `trigger(bytes32)` per volume, enumerates at a pinned block, decodes each receipt, and reports one structured result per run. It is one possible deployment, not a requirement.
+[`services/keeper/`](../services/keeper/README.md) is the keeper the maintainers run: a Cloudflare Worker, written in TypeScript with viem, that sends volumes up to 8 at a time through `trigger(bytes32[])`, enumerates at a pinned block, decodes each receipt, and reports one structured result per run. Each batch's gas limit is twice its estimate plus 1M per volume, capped at 2^24, so a volume estimated on the cheap path can still top up. It is one possible deployment, not a requirement.
