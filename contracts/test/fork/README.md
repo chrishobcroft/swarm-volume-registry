@@ -16,8 +16,9 @@ The suite checks for drift between the pinned `storage-incentives` submodule and
 | `FORK_GRACE_BLOCKS` | optional | Registry constructor argument. Defaults to `PostageStamp.minimumValidityBlocks()` on the target chain. |
 | `FORK_BZZ_PERMIT_EXPIRY` | optional | Registry constructor argument. `true` for Gnosis BZZ; defaults to `false`. |
 | `FORK_IMPORT_BATCH_ID` | optional | A real, pre-existing batch to register at the fork block. Unset by default, because the test then depends on that batch still being alive. |
+| `FORK_REQUIRED` | optional | `true` makes setUp fail when `FORK_POSTAGE_STAMP` is unset. Set it in any job that is meant to run the fork suite. |
 
-Every test is skipped when `FORK_POSTAGE_STAMP` is unset or has no code, so a plain `forge test` passes over the suite silently.
+With `FORK_POSTAGE_STAMP` unset, a plain `forge test` reports every fork test as SKIPPED, never as passed. With it set but no code at the address (usually a forgotten `--fork-url`), setUp fails. The migration tests skip the same way when their chain or `MIGRATE_PAYER` is absent, and fail if `MIGRATE_PAYER` is set on the wrong chain.
 
 ```sh
 cd contracts

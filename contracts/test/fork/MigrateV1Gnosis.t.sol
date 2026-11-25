@@ -66,7 +66,7 @@ contract MigrateV1GnosisTest is Test {
 
     function setUp() public {
         payer = vm.envOr("MIGRATE_PAYER", address(0));
-        if (payer == address(0) || block.chainid != 100) return;
+        if (payer == address(0) || block.chainid != 100) return; // test fails or skips
 
         v1 = IV1(vm.envOr("V1_REGISTRY", DEFAULT_V1));
         postage = IPostageM(v1.postage());
@@ -90,10 +90,10 @@ contract MigrateV1GnosisTest is Test {
     }
 
     function test_migrate_allPayerVolumes() public {
-        if (payer == address(0) || block.chainid != 100) {
-            emit log("skipped: set MIGRATE_PAYER and fork Gnosis");
-            return;
+        if (payer != address(0)) {
+            require(block.chainid == 100, "MIGRATE_PAYER set but not a Gnosis fork");
         }
+        vm.skip(payer == address(0));
         uint256 n = ids.length;
         uint256 price = postage.lastPrice();
         console2.log("block", block.number, "lastPrice", price);

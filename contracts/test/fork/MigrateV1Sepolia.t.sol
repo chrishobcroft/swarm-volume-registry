@@ -60,10 +60,7 @@ contract MigrateV1SepoliaTest is Test {
     address signer = makeAddr("signer");
 
     function test_migrate_v1_to_deployed_v2rc4() public {
-        if (block.chainid != 11155111) {
-            emit log("skipped: fork Sepolia");
-            return;
-        }
+        vm.skip(block.chainid != 11155111);
         deal(address(BZZ), payer, 1e24);
 
         // v1 volume, profile B (owner EOA, separate payer).
