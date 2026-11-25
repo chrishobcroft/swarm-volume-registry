@@ -43,7 +43,7 @@ Run commands in this part from `contracts/` unless stated otherwise.
 Import the deployment account once if necessary:
 
 ```sh
-cast wallet import volume-registry-deployer
+cast wallet import <account>
 ```
 
 ### A1. Prepare
@@ -91,7 +91,7 @@ Broadcast using the named keystore account:
 ```sh
 python3 script/deploy.py sepolia-postage-v0.9.4-1h --version v2-rc3 \
     --rpc-url "$RPC_URL" \
-    --account volume-registry-deployer \
+    --account <account> \
     --broadcast
 ```
 

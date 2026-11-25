@@ -54,7 +54,7 @@ same chain. The launcher verifies that the selected profile's chain ID matches t
 ```sh
 python3 script/deploy.py sepolia-postage-v0.9.4 \
     --rpc-url "$RPC_URL" \
-    --account swarm-volume-registry-deployer \
+    --account <account> \
     --broadcast
 ```
 
