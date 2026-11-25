@@ -6,13 +6,17 @@ Each registry deployment gets its own keeper Worker and wallet, and an existing 
 
 [`keeper-deploy.yml`](../../.github/workflows/keeper-deploy.yml) deploys every env in `wrangler.jsonc` on each merge to `main` that touches the keeper, after `keeper-ci` passes; it can also be run by hand from `main`. It uploads code and vars only. Secrets are set in Cloudflare by hand, once per Worker, and a deploy fails while any of them is missing. A new release's keeper therefore gets its wallet and secrets (C2, C3) before the PR that adds its env (C1) merges (C4).
 
-Run commands from `services/keeper/`. The deployment label is the network and release name (`sepolia-v2-rc3`).
+Run commands from `services/keeper/`, with `LABEL` set to the deployment label, `<network>-<release>` as `contracts/deployments/` names it:
+
+```sh
+LABEL=<network>-<release>    # sepolia-v2-rc4
+```
 
 ## C1. Switch the keeper to the release
 
 In `wrangler.jsonc`, replace the env with one keyed by the new label:
 
-- `name` and `DEPLOYMENT_NAME` are both `keeper-cloudflare-<label>`;
+- `name` and `DEPLOYMENT_NAME` are both `keeper-cloudflare-$LABEL`;
 - `CHAIN_ID` and `REGISTRY_ADDRESS` are the deployment record's.
 
 Add the outgoing Worker, its release and the commit it was last deployed from to the list of retired Workers at the top of the file: that commit is where to redeploy it from, if it ever has to be. Each Worker version's message is the commit it was deployed from (`pnpm exec wrangler deployments list --name <worker>`). In `package.json`, point `dev` and `check:deploy` at the new env.
@@ -31,10 +35,10 @@ Commit and open a PR to `main`. Do not merge it until C3 is done.
 ## C2. Create and fund the wallet
 
 ```sh
-python3 scripts/new_wallet.py sepolia-v2-rc3 --rpc-url "$RPC_URL" --value 0.2
+python3 scripts/new_wallet.py "$LABEL" --rpc-url "$RPC_URL" --funder <account> --value <ether>
 ```
 
-This creates the keystore account `keeper-cloudflare-<label>`, prompting for its new password, and funds it from `volume-registry-deployer`, prompting for that keystore's password. Add `--password-prompt` to enter both in desktop dialogs. It sends the native token only: the keeper pays gas and never holds BZZ. Fund it well above the env's `MIN_BALANCE_WEI`, the level at which runs start to warn. The script refuses a label with no deployment record, an RPC on another chain, and an account that already exists. With `--existing` it instead requires the account and only funds it: rerun that way when a run created the wallet but failed to fund it, or to top the wallet up.
+This creates the keystore account `keeper-cloudflare-$LABEL`, prompting for its new password, and funds it from the keystore account named by `--funder`, prompting for that keystore's password. The funder is any account in your Foundry keystore that holds the chain's native token; the maintainers use the contract deployer, `volume-registry-deployer`. Add `--password-prompt` to enter both in desktop dialogs. It sends the native token only: the keeper pays gas and never holds BZZ. Fund it well above the env's `MIN_BALANCE_WEI`, the level at which runs start to warn. The script refuses a label with no deployment record, an RPC on another chain, and an account that already exists. With `--existing` it instead requires the account and only funds it: rerun that way when a run created the wallet but failed to fund it, or to top the wallet up.
 
 ## C3. Set the secrets
 
@@ -43,11 +47,11 @@ From the C1 branch, so that `--env` names the new Worker. The key comes straight
 ```sh
 umask 077
 {
-  printf 'PRIVATE_KEY=%s\n' "$(cast wallet private-key --account keeper-cloudflare-sepolia-v2-rc3)"
+  printf 'PRIVATE_KEY=%s\n' "$(cast wallet private-key --account "keeper-cloudflare-$LABEL")"
   printf 'RPC_URL=https://…,https://…\nTELEGRAM_BOT_TOKEN=…\nTELEGRAM_CHAT_ID=-100…\n'
-} > .secrets.sepolia-v2-rc3
-pnpm exec wrangler secret bulk .secrets.sepolia-v2-rc3 --env sepolia-v2-rc3
-rm .secrets.sepolia-v2-rc3
+} > ".secrets.$LABEL"
+pnpm exec wrangler secret bulk ".secrets.$LABEL" --env "$LABEL"
+rm ".secrets.$LABEL"
 ```
 
 The Worker does not exist yet, so `wrangler` creates a placeholder under its name, with no code and no cron trigger, to hold the secrets. Run it under your own `wrangler login`: the CI token can redeploy a Worker but not create one.
@@ -61,8 +65,8 @@ Merge the C1 PR. `keeper-deploy` replaces the placeholder with the keeper.
 `GET /health` returns the wallet address, which must be the one C2 created:
 
 ```sh
-curl https://keeper-cloudflare-sepolia-v2-rc3.<subdomain>.workers.dev/health
-pnpm exec wrangler tail --env sepolia-v2-rc3 --format json
+curl "https://keeper-cloudflare-$LABEL.<subdomain>.workers.dev/health"
+pnpm exec wrangler tail --env "$LABEL" --format json
 ```
 
 Wait for one cron tick and confirm the run reports `ok` against the new registry address.
