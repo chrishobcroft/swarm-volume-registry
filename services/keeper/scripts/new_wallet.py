@@ -5,8 +5,8 @@ Every keeper Worker has its own wallet, so a new registry deployment needs a new
 one. The keystore account is named after the Worker,
 ``keeper-cloudflare-<label>``, where ``<label>`` is the deployment label that
 keys the env in ``wrangler.jsonc`` (``sepolia-v2-rc3``). It is funded from
-another keystore account — the registry deployer by default — with the native
-token only: a keeper pays gas and never holds BZZ.
+another keystore account, named by ``--funder``, with the native token only: a
+keeper pays gas and never holds BZZ.
 
 The script refuses a label with no committed deployment record, an RPC on a
 different chain from that record, and an account name already in the keystore.
@@ -34,7 +34,6 @@ LABEL = re.compile(
     r"(?P<network>[a-z][a-z0-9]*)-(?P<release>v[1-9][0-9]*(-rc[1-9][0-9]*)?)\Z"
 )
 ADDRESS = re.compile(r"0x[0-9a-fA-F]{40}\Z")
-DEFAULT_FUNDER = "volume-registry-deployer"
 
 
 def fail(message: str) -> NoReturn:
@@ -214,8 +213,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--value", required=True, help="amount to fund, in ether units")
     parser.add_argument(
         "--funder",
-        default=DEFAULT_FUNDER,
-        help=f"keystore account that pays (default: {DEFAULT_FUNDER})",
+        required=True,
+        help="keystore account that pays, funded on the deployment's chain",
     )
     parser.add_argument(
         "--existing",

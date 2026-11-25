@@ -43,7 +43,7 @@ Run commands in this part from `contracts/` unless stated otherwise.
 Import the deployment account once if necessary:
 
 ```sh
-cast wallet import volume-registry-deployer
+cast wallet import <account>
 ```
 
 ### A1. Prepare
@@ -91,7 +91,7 @@ Broadcast using the named keystore account:
 ```sh
 python3 script/deploy.py sepolia-postage-v0.9.4-1h --version v2-rc3 \
     --rpc-url "$RPC_URL" \
-    --account volume-registry-deployer \
+    --account <account> \
     --broadcast
 ```
 
@@ -297,80 +297,6 @@ package (B4).
 
 ## Part C — Start a keeper for the deployment
 
-Each registry deployment gets its own keeper Worker and wallet, and an existing keeper is
-never repointed. The new deployment's env replaces its predecessor's in
-`services/keeper/wrangler.jsonc`; the predecessor's Worker is not touched and keeps
-running whatever it was last deployed with until it is deleted out of band
-(`pnpm exec wrangler delete --name <worker>`). This is how the keeper service the maintainers
-run is operated, not a rule for anyone else running a keeper.
-
-Run commands in this part from `services/keeper/`. The deployment label is the network
-and release name (`sepolia-v2-rc3`).
-
-### C1. Switch the keeper to the release
-
-In `wrangler.jsonc`, replace the env with one keyed by the new label:
-
-- `name` and `DEPLOYMENT_NAME` are both `keeper-cloudflare-<label>`;
-- `CHAIN_ID` and `REGISTRY_ADDRESS` are the deployment record's.
-
-Add the outgoing Worker, its release and the commit it was last deployed from to the list
-of retired Workers at the top of the file: that commit is where to redeploy it from, if it
-ever has to be.
-
-Then bring the keeper's code up to the release. Diff the contract against the previous
-release tag (`git diff <previous-tag> <tag> -- contracts/src`), and change whatever the
-keeper needs: the hand-written ABI in `src/keeper/abi.ts`, and anything that depends on
-how the contract behaves, such as what a revert or an event means. `test/config.test.ts`
-fails until the env names a committed deployment record and the ABI matches that
-record's. Regenerate the binding types and check everything:
-
-```sh
-pnpm types
-pnpm test
-pnpm typecheck
-pnpm check:deploy
-```
-
-Commit, PR to `main` and merge before deploying, so the commit that deploys is on `main`.
-
-### C2. Create and fund the wallet
-
-```sh
-python3 scripts/new_wallet.py sepolia-v2-rc3 --rpc-url "$RPC_URL" --value 0.2
-```
-
-This creates the keystore account `keeper-cloudflare-<label>`, prompting for its new
-password, and funds it from `volume-registry-deployer`, prompting for that keystore's
-password. Add `--password-prompt` to enter both in desktop dialogs. It sends the native
-token only: the keeper pays gas and never holds BZZ. Fund it well above the env's
-`MIN_BALANCE_WEI`, the level at which runs start to warn. The script refuses a label with
-no deployment record, an RPC on another chain, and an account that already exists. With
-`--existing` it instead requires the account and only funds it: rerun that way when a run
-created the wallet but failed to fund it, or to top the wallet up.
-
-### C3. First deploy
-
-A Worker cannot take `wrangler secret put` before it exists, so the first deploy carries
-its secrets in a file, which `.gitignore` covers. The key comes straight from the keystore:
-
-```sh
-umask 077
-{
-  printf 'PRIVATE_KEY=%s\n' "$(cast wallet private-key --account keeper-cloudflare-sepolia-v2-rc3)"
-  printf 'RPC_URL=https://…,https://…\nTELEGRAM_BOT_TOKEN=…\nTELEGRAM_CHAT_ID=-100…\n'
-} > .secrets.sepolia-v2-rc3
-pnpm exec wrangler deploy --env sepolia-v2-rc3 --secrets-file .secrets.sepolia-v2-rc3
-rm .secrets.sepolia-v2-rc3
-```
-
-### C4. Check the first run
-
-`GET /health` returns the wallet address, which must be the one C2 created:
-
-```sh
-curl https://keeper-cloudflare-sepolia-v2-rc3.<subdomain>.workers.dev/health
-pnpm exec wrangler tail --env sepolia-v2-rc3 --format json
-```
-
-Wait for one cron tick and confirm the run reports `ok` against the new registry address.
+Steps C1–C5 are in [`services/keeper/RELEASING.md`](services/keeper/RELEASING.md):
+switch the keeper's env and code to the release (C1), create and fund its wallet (C2),
+set its secrets (C3), merge, which deploys it (C4), and check its first run (C5).

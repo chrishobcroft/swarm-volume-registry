@@ -54,7 +54,7 @@ same chain. The launcher verifies that the selected profile's chain ID matches t
 ```sh
 python3 script/deploy.py sepolia-postage-v0.9.4 \
     --rpc-url "$RPC_URL" \
-    --account swarm-volume-registry-deployer \
+    --account <account> \
     --broadcast
 ```
 
@@ -93,8 +93,9 @@ python3 -m unittest discover -s scripts/tests
 ```
 
 None of this needs chain access or Cloudflare credentials. CI runs the same
-steps (`.github/workflows/keeper-ci.yml`); deploys are by hand with `wrangler`
-([`RELEASING.md`](./RELEASING.md) Part C for a new deployment). Setup,
+steps (`.github/workflows/keeper-ci.yml`), and a merge to `main` deploys the keeper
+(`.github/workflows/keeper-deploy.yml`; [`services/keeper/RELEASING.md`](./services/keeper/RELEASING.md) for a
+new deployment). Setup,
 configuration and local runs are in its [README](./services/keeper/README.md).
 
 ## Indexer

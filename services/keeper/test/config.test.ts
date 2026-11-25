@@ -344,6 +344,15 @@ describe("committed deployments (wrangler.jsonc)", () => {
     expect(new Set(registries).size).toBe(registries.length);
   });
 
+  // keeper-deploy.yml ships every env here on each merge, so the file holds
+  // only the current release's keeper on each network. A predecessor's env is
+  // replaced, not kept: redeploying it would put this tree's code on a
+  // registry it was not written for (services/keeper/RELEASING.md).
+  test("one deployment per network", () => {
+    const networks = DEPLOYMENTS.map((env) => LABEL.exec(env)?.groups?.network);
+    expect(new Set(networks).size).toBe(networks.length);
+  });
+
   // The root is not a deployment. With no cron it could never run, and the
   // required secrets make a bare `wrangler deploy` fail instead of creating it.
   test("the root config is not deployable by accident", () => {

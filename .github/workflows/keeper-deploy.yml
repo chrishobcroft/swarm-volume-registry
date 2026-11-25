@@ -1,0 +1,104 @@
+# Deploys the keeper: every env in services/keeper/wrangler.jsonc, which holds
+# the current deployment's keeper for each network
+# (services/keeper/RELEASING.md). Runs on a merge to main that touches the
+# keeper, after keeper-ci passes, and by hand from main.
+#
+# It only uploads code and vars. Each Worker's wallet, RPC and Telegram secrets
+# live in Cloudflare and never pass through GitHub: they are set once by hand
+# (services/keeper/RELEASING.md C3), and `secrets.required` in wrangler.jsonc
+# fails the deploy of any Worker that lacks one. A new release's keeper
+# therefore gets its secrets before the PR that adds its env merges.
+#
+# The Cloudflare credentials are in the `cloudflare` GitHub Environment, which
+# only main can deploy to: CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID. The
+# token has the Workers Editor role at the Workers product scope: it redeploys
+# existing Workers but cannot create one, which C3 does by hand.
+
+name: keeper-deploy
+
+permissions: {}
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - services/keeper/**
+      - .github/workflows/keeper-ci.yml
+      - .github/workflows/keeper-deploy.yml
+  workflow_dispatch:
+
+# Queue rather than cancel: a deploy cut off mid-upload leaves a Worker on
+# whichever version Cloudflare last accepted.
+concurrency:
+  group: keeper-deploy
+  cancel-in-progress: false
+
+jobs:
+  check:
+    uses: ./.github/workflows/keeper-ci.yml
+    permissions:
+      contents: read
+
+  deployments:
+    name: List deployments
+    needs: check
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      envs: ${{ steps.list.outputs.envs }}
+    defaults:
+      run:
+        working-directory: services/keeper
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/setup@v3
+        with:
+          working-directory: services/keeper
+          cache: true
+          require-lockfile: true
+
+      - id: list
+        run: echo "envs=$(pnpm --silent deployments)" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    name: Deploy ${{ matrix.env }}
+    needs: deployments
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    environment:
+      name: cloudflare
+    strategy:
+      fail-fast: false
+      matrix:
+        env: ${{ fromJSON(needs.deployments.outputs.envs) }}
+    defaults:
+      run:
+        working-directory: services/keeper
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/setup@v3
+        with:
+          working-directory: services/keeper
+          cache: true
+          require-lockfile: true
+
+      # The Worker version's message records the commit it was built from, the
+      # one services/keeper/RELEASING.md C1 asks for when a Worker is
+      # retired.
+      - name: Deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ENV: ${{ matrix.env }}
+        run: pnpm exec wrangler deploy --env "$ENV" --message "$GITHUB_SHA"

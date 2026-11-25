@@ -10,7 +10,8 @@
     "types": "wrangler types --strict-vars false",
     "check:types": "wrangler types --strict-vars false --check",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "deployments": "node scripts/deployments.mjs"
   },
   "dependencies": {
     "viem": "2.55.16"
