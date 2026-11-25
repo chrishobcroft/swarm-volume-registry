@@ -1,13 +1,13 @@
 # Deploys the keeper: every env in services/keeper/wrangler.jsonc, which holds
-# the current deployment's keeper for each network (RELEASING.md Part C). Runs
-# on a merge to main that touches the keeper, after keeper-ci passes, and by
-# hand from main.
+# the current deployment's keeper for each network
+# (services/keeper/RELEASING.md). Runs on a merge to main that touches the
+# keeper, after keeper-ci passes, and by hand from main.
 #
 # It only uploads code and vars. Each Worker's wallet, RPC and Telegram secrets
 # live in Cloudflare and never pass through GitHub: they are set once by hand
-# (RELEASING.md C3), and `secrets.required` in wrangler.jsonc fails the deploy
-# of any Worker that lacks one. A new release's keeper therefore gets its secrets
-# before the PR that adds its env merges.
+# (services/keeper/RELEASING.md C3), and `secrets.required` in wrangler.jsonc
+# fails the deploy of any Worker that lacks one. A new release's keeper
+# therefore gets its secrets before the PR that adds its env merges.
 #
 # The Cloudflare credentials are in the `cloudflare` GitHub Environment, which
 # only main can deploy to: CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID. The
@@ -94,7 +94,8 @@ jobs:
           require-lockfile: true
 
       # The Worker version's message records the commit it was built from, the
-      # one RELEASING.md C1 asks for when a Worker is retired.
+      # one services/keeper/RELEASING.md C1 asks for when a Worker is
+      # retired.
       - name: Deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

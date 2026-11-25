@@ -8,7 +8,7 @@ Cloudflare Cron Triggers are the only scheduler. GitHub Actions tests the Worker
 |---|---|---|---|---|
 | `sepolia-v2-rc4` | `keeper-cloudflare-sepolia-v2-rc4` | Sepolia (11155111) | v2-rc4 `0xe4913089…dad332a4` | every 10 minutes |
 
-Each env in [`wrangler.jsonc`](./wrangler.jsonc) is one registry deployment, keyed by its deployment label, with its own wallet and RPC credentials. This tree supports only the deployments it has envs for. A new registry deployment replaces its predecessor's env ([`RELEASING.md`](../../RELEASING.md) Part C); the predecessor's Worker keeps running what it was last deployed with until it is deleted, and `wrangler.jsonc` lists those Workers and the commits they were deployed from. Keepers may share one Telegram group; every alert names its deployment, chain and registry.
+Each env in [`wrangler.jsonc`](./wrangler.jsonc) is one registry deployment, keyed by its deployment label, with its own wallet and RPC credentials. This tree supports only the deployments it has envs for. A new registry deployment replaces its predecessor's env ([`RELEASING.md`](./RELEASING.md)); the predecessor's Worker keeps running what it was last deployed with until it is deleted, and `wrangler.jsonc` lists those Workers and the commits they were deployed from. Keepers may share one Telegram group; every alert names its deployment, chain and registry.
 
 ## Layout
 
@@ -62,7 +62,7 @@ Needs Workers Paid: a run signs and sends transactions, which the Free plan's 10
 
 ### Initial worker deployment
 
-A new deployment's Worker is set up by [`RELEASING.md`](../../RELEASING.md) Part C: `scripts/new_wallet.py` creates and funds its wallet, `wrangler secret bulk` stores its secrets before the env merges, and the merge deploys it. `GET /health` then returns the wallet address the Worker signs with (and `503` with every validation problem if the configuration is invalid, without making RPC calls).
+A new deployment's Worker is set up by [`RELEASING.md`](./RELEASING.md): `scripts/new_wallet.py` creates and funds its wallet, `wrangler secret bulk` stores its secrets before the env merges, and the merge deploys it. `GET /health` then returns the wallet address the Worker signs with (and `503` with every validation problem if the configuration is invalid, without making RPC calls).
 
 ### Worker code update
 
